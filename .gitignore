@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Chrome/Selenium
+drivers/
+chrome_temp/
+debug.log
+
+# Generated files
+*.docx
+
+# IDE
+.idea/
+.vscode/
+
+# Environment
+.env
+.venv
+venv/
+ENV/
+
+# Operating System
+.DS_Store
+Thumbs.db
+desktop.ini 
