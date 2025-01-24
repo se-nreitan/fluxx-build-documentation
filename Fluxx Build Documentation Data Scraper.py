@@ -311,6 +311,32 @@ def navigate_to_admin(driver):
         print(f"Error navigating to Admin Panel: {str(e)}")
         return False
 
+# HTML Structure Reference for Forms Section:
+#
+# Models:
+# - Located in: #iconList > ul
+# - Model name from: ul[id] attribute (replace _ with space, title case)
+# Example: <ul id="custom_ui_enhancements" class="toggle-class open" data-click-when-opened=".scroll-to-card">
+#
+# Themes:
+# - Located in: ul > li.icon[data-card-uid]
+# - Theme name from: li.icon > a.link.scroll-to-card > span.label[role='menuitem']
+# Example:
+# <li class="icon" data-card-uid="19980">
+#   <a class="link scroll-to-card" href="#fluxx-card-26">
+#     <span class="label" role="menuitem">Animation Examples</span>
+#
+# Views:
+# - Container: li.icon > div.listing[data-type='listing'][data-src='/stencils']
+# - View items: div.listing > ul.list > li.entry:not(.non-entry)
+# - View name from: li.entry > a.to-detail > div.label
+# Example:
+# <div class="listing" data-type="listing" data-src="/stencils" ...>
+#   <ul class="list">
+#     <li class="active entry selected" data-model-id="35727">
+#       <a class="to-detail" href="/stencils/35727">
+#         <div class="label">Gallery</div>
+
 def wait_for_forms_and_parse(driver, max_retries=3):
     """Wait for Forms section to load and parse content with retry logic"""
     try:
@@ -318,15 +344,16 @@ def wait_for_forms_and_parse(driver, max_retries=3):
         
         wait = WebDriverWait(driver, 10)
         
-        # First verify Forms is selected
+        # First verify Forms section exists
         wait.until(EC.presence_of_element_located(
-            (By.XPATH, "//div[@id='dashboard-picker']//li[contains(@class,'selected')]//a[text()='Forms']")
+            (By.CSS_SELECTOR, "#iconList")
         ))
         
         while True:  # Loop until user confirms correct model count
-            # Get model count by counting list-label elements that contain model names
-            model_list = driver.find_elements(By.CSS_SELECTOR, 
-                "#admin-navigation #iconList > ul > li.list-label div.link")
+            # Get model count by finding all model ULs in the iconList
+            model_list = driver.find_elements(By.CSS_SELECTOR, "#iconList > ul")
+            # Filter out any empty or invalid ULs
+            model_list = [model for model in model_list if model.get_attribute("id")]
             model_count = len(model_list)
             
             # Ask user to verify count
@@ -334,70 +361,111 @@ def wait_for_forms_and_parse(driver, max_retries=3):
             verify = input("Does this count appear correct? (y/n): ").strip().lower()
             
             if verify == 'y':
-                print("\nProceeding with parsing...")
-                # Now get the full UL elements for processing
-                model_uls = driver.find_elements(By.CSS_SELECTOR, "#iconList > ul.toggle-class")
                 break
             else:
-                print("\nWaiting for page to fully load...")
-                retry = input("Press Enter when ready to rescan, or 'q' to quit: ").strip().lower()
-                if retry == 'q':
-                    return None
+                print("\nPlease wait for all models to load and try again...")
+                time.sleep(2)
                 continue
-        
+                
+        # Initialize dictionary to store model data
         models = {}
         
         # Process each model
-        for model_ul in model_uls:
+        for model_ul in model_list:
             try:
-                # Get model name
-                model_name = model_ul.find_element(By.CSS_SELECTOR, 
-                    "li.list-label div.link").get_attribute("textContent").strip()
+                # Get model name from the UL id attribute
+                model_id = model_ul.get_attribute("id")
+                if not model_id:
+                    continue
+                    
+                model_name = model_id.replace('_', ' ').title()
                 
-                print(f"\nProcessing model: {model_name}")
-                models[model_name] = {'themes': {}}
+                # Find the "New Theme" link to extract model type
+                model_type = None
+                try:
+                    # Try multiple selectors to find model type
+                    selectors = [
+                        "a.link.to-modal[href*='model_theme[model_type]']",
+                        "a.link[href*='model_theme[model_type]']",
+                        "a[href*='model_theme[model_type]']"
+                    ]
+                    
+                    for selector in selectors:
+                        try:
+                            new_theme_link = model_ul.find_element(By.CSS_SELECTOR, selector)
+                            if new_theme_link:
+                                href = new_theme_link.get_attribute("href")
+                                # Extract model type from URL parameter
+                                match = re.search(r'model_theme\[model_type\]=(\w+)', href)
+                                if match:
+                                    model_type = match.group(1)
+                                    break
+                        except:
+                            continue
+                except:
+                    # If we can't find the model type, continue without it
+                    pass
                 
-                # Get themes (excluding utility items)
+                # Print model name with type if available
+                if model_type:
+                    print(f"\nModel: {model_name} ({model_type})")
+                else:
+                    print(f"\nModel: {model_name}")
+                
+                models[model_name] = {
+                    'type': model_type,
+                    'themes': {}
+                }
+                
+                # Find themes within this model's UL - looking for li.icon elements
                 theme_items = model_ul.find_elements(By.CSS_SELECTOR, 
-                    "li.icon:not(.new-theme):not(.retired-themes):not(.export-view):not(.filter-view):not(.viz-view)")
+                    "li.icon[data-card-uid]")
                 
                 for theme in theme_items:
                     try:
-                        # Get theme name
-                        theme_name = theme.find_element(By.CSS_SELECTOR, 
-                            "a.link span.label").get_attribute("textContent").strip()
+                        # Get theme name from the exact path: li.icon > a.link > span.label
+                        theme_label = theme.find_element(By.CSS_SELECTOR, 
+                            "a.link.scroll-to-card > span.label[role='menuitem']")
+                        theme_name = theme_label.get_attribute("textContent").strip()
                         
-                        if theme_name in ['New Theme', 'Retired Themes', 'Export', 'Filter', 'Visualizations']:
-                            continue
+                        if theme_name and theme_name not in ['New Theme', 'Retired Themes', 'Export', 'Filter', 'Visualizations']:
+                            print(f"  Theme: {theme_name}")
+                            models[model_name]['themes'][theme_name] = {'views': []}
                             
-                        print(f"  Theme: {theme_name}")
-                        models[model_name]['themes'][theme_name] = {'views': []}
-                        
-                        # Get views if they exist
-                        try:
-                            views = theme.find_elements(By.CSS_SELECTOR,
-                                "div.listing ul.list li.entry:not(.non-entry) div.label")
+                            # Find the listing div that contains views - using exact path
+                            listing_div = theme.find_element(By.CSS_SELECTOR, 
+                                "div.listing[data-type='listing'][data-src='/stencils']")
+                            
+                            # Get all view entries from the list - using exact path
+                            views = listing_div.find_elements(By.CSS_SELECTOR,
+                                "ul.list > li.entry:not(.non-entry)")
                             
                             for view in views:
-                                view_name = view.get_attribute("textContent").strip()
-                                if view_name and view_name != 'New View':
-                                    print(f"    View: {view_name}")
-                                    models[model_name]['themes'][theme_name]['views'].append(view_name)
-                        except:
-                            continue
-                            
+                                try:
+                                    # Get view name using exact path: li.entry > a.to-detail > div.label
+                                    label_div = view.find_element(By.CSS_SELECTOR, 
+                                        "a.to-detail > div.label")
+                                    view_name = label_div.get_attribute("textContent").strip()
+                                    
+                                    if view_name and view_name != 'New View':
+                                        print(f"    View: {view_name}")
+                                        models[model_name]['themes'][theme_name]['views'].append(view_name)
+                                except Exception as e:
+                                    print(f"    Error getting view name: {str(e)}")
+                                    continue
+                                    
                     except Exception as e:
                         print(f"Error processing theme: {str(e)}")
                         continue
                         
             except Exception as e:
-                print(f"Error processing model: {str(e)}")
+                print(f"Error processing model {model_name if 'model_name' in locals() else 'Unknown'}: {str(e)}")
                 continue
         
         return models
         
     except Exception as e:
-        print(f"Error parsing Forms section: {str(e)}")
+        print(f"\nError parsing Forms section: {str(e)}")
         return None
 
 def generate_word_document(models_data, site_url=None):
@@ -442,11 +510,15 @@ def generate_word_document(models_data, site_url=None):
                 table = doc.add_table(rows=9, cols=2)
                 table.style = 'Table Grid'
                 
-                # Model name header - first create the cells
+                # Model name header with type in parentheses
                 header_row = table.rows[0]
                 if len(header_row.cells) >= 2:  # Verify we have enough cells
                     header_row.cells[0].merge(header_row.cells[1])
-                    header_row.cells[0].text = model_name
+                    model_type = model_data.get('type', '')
+                    header_text = model_name
+                    if model_type:
+                        header_text += f" ({model_type})"
+                    header_row.cells[0].text = header_text
                     header_row.cells[0].paragraphs[0].style = doc.styles['Heading 3']
                 
                 # Themes section
