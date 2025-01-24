@@ -29,6 +29,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import datetime
+import threading
 
 def get_chrome_path():
     """Get installed Chrome path from registry"""
@@ -241,45 +242,68 @@ def scrape_fluxx_data(driver, url):
         input("\nPress Enter to continue...")
         return None
 
+def print_divider():
+    """Print a visual divider line"""
+    print("\n" + "=" * 50 + "\n")
+
+def wait_with_spinner(message, action_func, *args, **kwargs):
+    """Execute a function while showing a loading spinner"""
+    stop_spinner = threading.Event()
+    spinner_thread = threading.Thread(
+        target=show_spinner, 
+        args=(stop_spinner, message)
+    )
+    spinner_thread.start()
+    
+    try:
+        result = action_func(*args, **kwargs)
+        stop_spinner.set()
+        spinner_thread.join()
+        return result
+    except Exception as e:
+        stop_spinner.set()
+        spinner_thread.join()
+        raise e
+
 def wait_for_dashboard(driver, timeout=60):
     """Wait for dashboard to load and verify we're logged in"""
     try:
-        print("\nWaiting for dashboard to load...")
+        print("Waiting for dashboard to load...")
         print("Please:")
         print("1. Log in with your credentials")
         print("2. Select your Admin profile (if applicable)")
-        print("3. System will automatically proceed when dashboard loads")
+        print("3. System will automatically proceed when dashboard loads\n")
         
-        wait = WebDriverWait(driver, timeout)
-        
-        # Wait for the specific Admin Panel link
-        admin_link = wait.until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, 'a.to-admin-panel[href="/?db=config"]'))
-        )
-        print("Dashboard loaded successfully!")
+        def wait_for_admin():
+            wait = WebDriverWait(driver, timeout)
+            return wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'a.to-admin-panel[href="/?db=config"]'))
+            )
+            
+        wait_with_spinner("Waiting for successful login...", wait_for_admin)
+        print("\nDashboard loaded successfully!")
         return True
         
     except TimeoutException:
-        print("Timed out waiting for dashboard to load")
+        print("Timed out waiting for login")
         return False
     except Exception as e:
-        print(f"Error waiting for dashboard: {str(e)}")
+        print(f"Error waiting for login: {str(e)}")
         return False
 
 def navigate_to_admin(driver):
     """Navigate to Admin Panel"""
     try:
-        wait = WebDriverWait(driver, 10)
-        
-        # Wait for and click the specific Admin Panel link
-        admin_button = wait.until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, 'a.to-admin-panel[href="/?db=config"]'))
-        )
-        print("Found Admin Panel button")
-        admin_button.click()
-        
-        # Wait for admin page to load
-        wait.until(EC.url_contains('db=config'))
+        def nav_action():
+            wait = WebDriverWait(driver, 10)
+            admin_button = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'a.to-admin-panel[href="/?db=config"]'))
+            )
+            print("Found Admin Panel button")
+            admin_button.click()
+            wait.until(EC.url_contains('db=config'))
+            
+        wait_with_spinner("Navigating to Admin Panel...", nav_action)
         print("Successfully navigated to Admin Panel")
         return True
         
@@ -376,42 +400,105 @@ def wait_for_forms_and_parse(driver, max_retries=3):
         print(f"Error parsing Forms section: {str(e)}")
         return None
 
-def generate_word_document(models_data):
-    """Generate a Word document with the extracted model data"""
+def generate_word_document(models_data, site_url=None):
+    """Generate a Word document using the Social Edge template format"""
     try:
         # Create document
         doc = Document()
         
-        # Add title
-        title = doc.add_heading('Fluxx Build Documentation', 0)
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        # Title
+        doc.add_heading('Fluxx Build Documentation', 0)
+        doc.add_paragraph('via Social Edge Consulting').italic = True
         
-        # Add timestamp
-        timestamp = doc.add_paragraph()
-        timestamp.add_run(f'Generated: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        doc.add_paragraph()  # Add spacing
+        # Add TOC placeholder
+        doc.add_paragraph()
         
-        # Add content for each model
+        # Client Information section
+        doc.add_heading('Client Information', 1)
+        table = doc.add_table(rows=7, cols=2)
+        table.style = 'Table Grid'
+        
+        # Add client info headers and populate URL
+        headers = ['URLs:', 'Product Enhancements:', 'Integrations:', 
+                  'Social Edge Implementation Team:', 'Project Team:', 
+                  'Admins:', 'Notes:']
+        for i, header in enumerate(headers):
+            cells = table.rows[i].cells
+            cells[0].text = header
+            cells[0].paragraphs[0].runs[0].bold = True
+            
+            # Add URL to the first row if available
+            if i == 0 and site_url:
+                cells[1].text = site_url
+        
+        # Models Section
+        doc.add_page_break()
+        doc.add_heading('Models', 1)
+        
+        # Add each model
         for model_name, model_data in models_data.items():
-            # Add model heading
-            model_heading = doc.add_heading(f'Model: {model_name}', level=1)
-            
-            # Add themes and views
-            for theme_name, theme_data in model_data['themes'].items():
-                # Add theme
-                theme_para = doc.add_paragraph()
-                theme_para.add_run('Theme: ').bold = True
-                theme_para.add_run(theme_name)
+            try:
+                # Model table
+                table = doc.add_table(rows=9, cols=2)
+                table.style = 'Table Grid'
                 
-                # Add views
-                for view_name in theme_data['views']:
-                    view_para = doc.add_paragraph()
-                    view_para.style = 'List Bullet'
-                    view_para.add_run('View: ').bold = True
-                    view_para.add_run(view_name)
-            
-            # Add spacing between models
-            doc.add_paragraph()
+                # Model name header - first create the cells
+                header_row = table.rows[0]
+                if len(header_row.cells) >= 2:  # Verify we have enough cells
+                    header_row.cells[0].merge(header_row.cells[1])
+                    header_row.cells[0].text = model_name
+                    header_row.cells[0].paragraphs[0].style = doc.styles['Heading 3']
+                
+                # Themes section
+                if len(table.rows) > 1:  # Verify we have a second row
+                    row = table.rows[1].cells
+                    if len(row) >= 2:  # Verify we have both cells
+                        row[0].text = 'Themes:'
+                        row[0].paragraphs[0].runs[0].bold = True
+                        
+                        # Add themes and views
+                        themes_text = []
+                        for theme_name, theme_data in model_data['themes'].items():
+                            theme_section = [f"\n{theme_name}"]
+                            for view in theme_data['views']:
+                                theme_section.append(f"• {view}")
+                            themes_text.append('\n'.join(theme_section))
+                        
+                        row[1].text = f"{len(model_data['themes'])} Themes Built\n"
+                        row[1].text += '\n'.join(themes_text)
+                
+                # Add other rows as placeholders
+                placeholders = [
+                    'Workflow:', 'Add Card Menu:', 'Method:', 
+                    'Before New / After Create:', 
+                    'Before Validation / After Enter / Guard Instructions:',
+                    'Documents:', 'Embedded Cards / Dynamic Relationships:',
+                    'Notes:'
+                ]
+                
+                for i, placeholder in enumerate(placeholders, start=2):
+                    if i < len(table.rows):  # Verify row exists
+                        cells = table.rows[i].cells
+                        if len(cells) >= 2:  # Verify cells exist
+                            cells[0].text = placeholder
+                            cells[0].paragraphs[0].runs[0].bold = True
+                
+                # Add page break between models
+                if model_name != list(models_data.keys())[-1]:
+                    doc.add_page_break()
+                    
+            except Exception as e:
+                print(f"\nError processing model {model_name}: {str(e)}")
+                continue
+        
+        # Add remaining sections as placeholders
+        doc.add_page_break()
+        doc.add_heading('Portals', 1)
+        # ... portal tables would go here
+        
+        doc.add_page_break()
+        doc.add_heading('Other Build Considerations', 1)
+        # ... other considerations table would go here
         
         # Save the document
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -424,115 +511,298 @@ def generate_word_document(models_data):
         print(f"\nError generating Word document: {str(e)}")
         return None
 
+def show_spinner(stop_event, message=""):
+    """Show a simple spinner animation with a message"""
+    spinner = ['|', '/', '-', '\\']  # Simple ASCII spinner
+    i = 0
+    while not stop_event.is_set():
+        print(f"\r{spinner[i]} {message}", end='', flush=True)
+        i = (i + 1) % len(spinner)
+        time.sleep(0.1)
+    print("\r", end='', flush=True)  # Clear the spinner line
+
+def print_header():
+    """Print the application header with clean formatting"""
+    os.system('cls' if os.name == 'nt' else 'clear')
+    
+    # Social Edge logo ASCII art
+    print("""
+                                                                                           
+                             
+                    ;X.            
+                  ;XX+             
+                .XX+  ..:.         
+              .XX+  xXXxxXXX       
+            .XXx  xXX.    .XX      
+            XX  ;XX. .XX+  XX      
+            Xx  .  .XXX  +XX.      
+            ;XXx.;XXx  ;XX;        
+              .+++:  :XX;          
+                   :XX+            
+                  +X+            
+                                                           
+       Social Edge Consulting - 2025
+   nick.reitan@socialedgeconsulting.com                    
+                                                                   
+    """)
+    
+    print("  Fluxx Build Documentation Automated Tool    ")
+    print_divider()
+
+def check_chrome_and_driver():
+    """Diagnose Chrome and ChromeDriver versions and compatibility"""
+    try:
+        print("Please wait while your Google Chrome version is verified...")
+        print("(This will take a few moments)")
+        print_divider()
+        
+        # Create a threading event to control the spinner
+        stop_spinner = threading.Event()
+        spinner_thread = threading.Thread(
+            target=show_spinner, 
+            args=(stop_spinner, "Checking Chrome setup...")
+        )
+        spinner_thread.start()
+        
+        # Get Chrome version
+        chrome_path = get_chrome_path()
+        if not chrome_path:
+            stop_spinner.set()
+            spinner_thread.join()
+            print("Error: Chrome not found. Please install Google Chrome.")
+            return False
+            
+        chrome_version = get_chrome_version()
+        
+        # Update spinner message
+        stop_spinner.set()
+        spinner_thread.join()
+        print(f"Chrome version detected: {chrome_version}")
+        print_divider()
+        
+        # Check if chromedriver exists and is compatible
+        driver_path = os.path.join(os.getcwd(), "chromedriver.exe")
+        if os.path.exists(driver_path):
+            stop_spinner = threading.Event()
+            spinner_thread = threading.Thread(
+                target=show_spinner, 
+                args=(stop_spinner, "Verifying ChromeDriver compatibility...")
+            )
+            spinner_thread.start()
+            
+            try:
+                service = Service(driver_path, log_path='NUL')
+                options = webdriver.ChromeOptions()
+                options.add_argument('--headless')
+                options.add_argument('--log-level=3')  # Suppress console messages
+                options.add_experimental_option('excludeSwitches', ['enable-logging'])
+                driver = webdriver.Chrome(service=service, options=options)
+                driver.quit()
+                stop_spinner.set()
+                spinner_thread.join()
+                print("\nSetup complete!")
+                print_divider()
+                time.sleep(0.5)
+                return True
+            except Exception:
+                stop_spinner.set()
+                spinner_thread.join()
+                print("\nUpdating ChromeDriver to match Chrome version...")
+        else:
+            print("\nSetting up ChromeDriver...")
+            
+        # Download matching ChromeDriver if needed
+        stop_spinner = threading.Event()
+        spinner_thread = threading.Thread(
+            target=show_spinner, 
+            args=(stop_spinner, "Downloading and installing ChromeDriver...")
+        )
+        spinner_thread.start()
+        
+        chrome_major = chrome_version.split('.')[0]
+        driver_url = f"https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/{chrome_version}/win64/chromedriver-win64.zip"
+        
+        try:
+            response = requests.get(driver_url)
+            response.raise_for_status()
+            
+            with open("chromedriver.zip", "wb") as f:
+                f.write(response.content)
+                
+            with zipfile.ZipFile("chromedriver.zip", "r") as zip_ref:
+                zip_ref.extractall()
+                
+            if os.path.exists("chromedriver.exe"):
+                os.remove("chromedriver.exe")
+            shutil.move("chromedriver-win64/chromedriver.exe", "chromedriver.exe")
+            
+            # Clean up
+            os.remove("chromedriver.zip")
+            shutil.rmtree("chromedriver-win64")
+            
+            stop_spinner.set()
+            spinner_thread.join()
+            print("Setup complete!")
+            return True
+            
+        except Exception as e:
+            stop_spinner.set()
+            spinner_thread.join()
+            print("\nError: Unable to setup ChromeDriver automatically")
+            print("Please download ChromeDriver manually:")
+            print(f"1. Visit: https://googlechromelabs.github.io/chrome-for-testing/")
+            print(f"2. Download version matching Chrome {chrome_major}")
+            print("3. Extract chromedriver.exe to the same folder as this program")
+            return False
+            
+    except Exception as e:
+        if 'stop_spinner' in locals() and not stop_spinner.is_set():
+            stop_spinner.set()
+            spinner_thread.join()
+        print("\nError: Unable to verify Chrome setup")
+        return False
+
+def validate_fluxx_url(url):
+    """Validate and format Fluxx URL"""
+    url = url.strip().lower()
+    
+    # Remove any protocol prefixes
+    if url.startswith(('http://', 'https://')):
+        url = url.replace('http://', '').replace('https://', '')
+    
+    # Remove any trailing slashes
+    url = url.rstrip('/')
+    
+    # Check if URL ends with .fluxx.io
+    if not url.endswith('.fluxx.io'):
+        if '.fluxx.io' in url:
+            # Extract the part before .fluxx.io if it exists
+            url = url.split('.fluxx.io')[0] + '.fluxx.io'
+        else:
+            # Append .fluxx.io if missing
+            url = url + '.fluxx.io'
+    
+    return f'https://{url}'
+
 def main():
     try:
-        while True:  # Main program loop
-            # Clear screen
-            os.system('cls' if os.name == 'nt' else 'clear')
-            print("=== Fluxx Build Documentation Data Scraper ===\n")
+        print_header()
+        
+        # Check Chrome setup
+        if not check_chrome_and_driver():
+            input("\nPress Enter to exit...")
+            return
+        
+        # Clear screen and show fresh header before URL input
+        print_header()
+        
+        # Get and validate URL
+        while True:
+            url = input("Enter Fluxx Instance Name or URL (e.g., 'example' or example.fluxx.io): ").strip()
+            if not url:
+                print("URL cannot be empty. Please try again.")
+                continue
+                
+            url = validate_fluxx_url(url)
+            print(f"\nUsing URL: {url}")
+            verify = input("Is this correct? (y/n): ").strip().lower()
+            if verify == 'y':
+                break
+            print()  # Add blank line before retry
             
-            # Get URL
-            url = input("Enter Fluxx URL (e.g., example.fluxx.io): ").strip()
-            if not url.startswith(('http://', 'https://')):
-                url = 'https://' + url
-            print(f"Using URL: {url}")
-            
-            # Find Chrome installation
-            chrome_path = get_chrome_path()
-            if not chrome_path:
-                print("\nError: Chrome not found. Please install Google Chrome.")
-                input("Press Enter to exit...")
-                return
-            
-            print(f"\nFound Chrome at: {chrome_path}")
-            
-            # Setup ChromeDriver
-            driver_path = get_resource_path("chromedriver.exe")
-            
-            # Chrome options
-            options = webdriver.ChromeOptions()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--log-level=3')  # Suppress most Chrome logs
-            options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
-            options.add_experimental_option('useAutomationExtension', False)
-            
-            # Create temp profile
-            temp_dir = os.path.join(os.getcwd(), 'chrome_temp')
-            if not os.path.exists(temp_dir):
-                os.makedirs(temp_dir)
-            options.add_argument(f'--user-data-dir={temp_dir}')
-            
-            print("\nStarting Chrome...")
-            service = Service(driver_path, log_path='NUL')  # Suppress ChromeDriver logs
-            driver = webdriver.Chrome(service=service, options=options)
-            
-            print(f"Navigating to {url}")
-            driver.get(url)
-            
-            current_url = driver.current_url
-            print(f"Current URL: {current_url}")
-            
-            if current_url == "data:,":
-                print("\nNavigation failed. Please check your internet connection.")
-                return
-            
-            # Wait for dashboard and navigate to Admin Panel
-            if not wait_for_dashboard(driver):
-                print("\nError: Could not detect dashboard load.")
-                input("Press Enter to exit...")
-                return
-            
-            print("\nDashboard detected! Navigating to Admin Panel...")
-            
-            # Navigate to Admin Panel
-            if not navigate_to_admin(driver):
-                print("\nError: Could not navigate to Admin Panel.")
-                input("Press Enter to exit...")
-                return
-            
-            # Parse the Forms section
-            while True:  # Options loop
-                # Get the data
-                models_data = wait_for_forms_and_parse(driver)
-                if not models_data:
-                    print("\nError: Could not parse Forms section.")
-                    retry_choice = input("Would you like to return to the main menu? (y/n): ").strip().lower()
-                    if retry_choice == 'y':
-                        break  # Break to main menu
-                    else:
-                        input("Press Enter to exit...")
-                        return
+        # Setup Chrome
+        print("Starting Chrome...")
+        driver_path = get_resource_path("chromedriver.exe")
+        options = webdriver.ChromeOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--log-level=3')
+        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        # Create temp profile
+        temp_dir = os.path.join(os.getcwd(), 'chrome_temp')
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+        options.add_argument(f'--user-data-dir={temp_dir}')
+        
+        service = Service(driver_path, log_path='NUL')  # Suppress ChromeDriver logs
+        driver = webdriver.Chrome(service=service, options=options)
+        
+        print(f"Navigating to {url}")
+        driver.get(url)
+        
+        current_url = driver.current_url
+        print(f"Current URL: {current_url}\n")  # Add newline after URL
+        
+        if current_url == "data:,":
+            print("Navigation failed. Please check your internet connection.")
+            return
+        
+        # Wait for dashboard and navigate to Admin Panel
+        if not wait_for_dashboard(driver):
+            print("\nError: Could not detect dashboard load.")
+            input("Press Enter to exit...")
+            return
+        
+        print("\nDashboard detected! Navigating to Admin Panel...")
+        
+        # Navigate to Admin Panel
+        if not navigate_to_admin(driver):
+            print("\nError: Could not navigate to Admin Panel.")
+            input("Press Enter to exit...")
+            return
+        
+        # Parse the Forms section
+        while True:  # Options loop
+            # Get the data
+            models_data = wait_for_forms_and_parse(driver)
+            if not models_data:
+                print("\nError: Could not parse Forms section.")
+                print_divider()
+                retry_choice = input("Would you like to return to the main menu? (y/n): ").strip().lower()
+                if retry_choice == 'y':
+                    break  # Break to main menu
+                else:
+                    input("Press Enter to exit...")
+                    return
 
-                print("\nWhat would you like to do?")
-                print("1. Generate Word document")
-                print("2. Re-run scan")
-                print("3. Exit")
+            print_divider()
+            print("Available Actions:")
+            print("1. Generate Word document")
+            print("2. Re-run scan")
+            print("3. Exit")
+            
+            choice = input("\nEnter your choice (1-3): ").strip()
+            
+            if choice == '1':
+                doc_filename = wait_with_spinner(
+                    "Generating Word document...", 
+                    generate_word_document, 
+                    models_data,
+                    site_url=url  # Pass the URL to the document generator
+                )
+                if doc_filename:
+                    print(f"\nDocumentation has been saved to: {doc_filename}")
                 
-                choice = input("\nEnter your choice (1-3): ").strip()
-                
-                if choice == '1':
-                    doc_filename = generate_word_document(models_data)
-                    if doc_filename:
-                        print(f"\nDocumentation has been saved to: {doc_filename}")
-                    
-                    print("\nWould you like to:")
-                    print("1. Return to options")
-                    print("2. Exit")
-                    sub_choice = input("\nEnter your choice (1-2): ").strip()
-                    if sub_choice == '2':
-                        return
-                        
-                elif choice == '2':
-                    print("\nRe-running scan...")
-                    continue  # Continue the loop to re-run wait_for_forms_and_parse
-                    
-                elif choice == '3':
+                print_divider()
+                print("Would you like to:")
+                print("1. Return to options")
+                print("2. Exit")
+                sub_choice = input("\nEnter your choice (1-2): ").strip()
+                if sub_choice == '2':
                     return
                     
-                else:
-                    print("\nInvalid choice. Please try again.")
-            
+            elif choice == '2':
+                print("\nRe-running scan...")
+                continue
+                
+            elif choice == '3':
+                return
+                
+            else:
+                print("\nInvalid choice. Please try again.")
+        
         input("\nPress Enter when finished to close Chrome...")
         
     except Exception as e:
