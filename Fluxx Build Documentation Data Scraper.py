@@ -296,6 +296,35 @@ def wait_for_dashboard(driver, timeout=60):
         print(f"\nLogin error: {str(e)}")
         return False
 
+def navigate_to_forms(driver):
+    """Navigate to Forms dashboard"""
+    try:
+        def nav_action():
+            wait = WebDriverWait(driver, 10)
+            forms_link = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'li.item a.to-dashboard[href*="/client_stores/"]'))
+            )
+            # Verify it's the Forms link by checking text content
+            if forms_link.text.strip() == 'Forms':
+                forms_link.click()
+                time.sleep(2)  # Wait for dashboard to load
+            else:
+                # If first link isn't Forms, find all dashboard links and click the Forms one
+                dashboard_links = driver.find_elements(By.CSS_SELECTOR, 'li.item a.to-dashboard[href*="/client_stores/"]')
+                for link in dashboard_links:
+                    if link.text.strip() == 'Forms':
+                        link.click()
+                        time.sleep(2)
+                        break
+            
+        wait_with_spinner("Navigating to Forms dashboard...", nav_action)
+        print("Successfully navigated to Forms dashboard")
+        return True
+        
+    except Exception as e:
+        print(f"Error navigating to Forms dashboard: {str(e)}")
+        return False
+
 def navigate_to_admin(driver):
     """Navigate to Admin Panel"""
     try:
@@ -310,11 +339,195 @@ def navigate_to_admin(driver):
             
         wait_with_spinner("Navigating to Admin Panel...", nav_action)
         print("Successfully navigated to Admin Panel")
-        return True
+        
+        # After reaching Admin Panel, ensure we're on Forms dashboard
+        return navigate_to_forms(driver)
         
     except Exception as e:
         print(f"Error navigating to Admin Panel: {str(e)}")
         return False
+
+def navigate_to_workflows(driver):
+    """Navigate to Workflow dashboard"""
+    try:
+        def nav_action():
+            wait = WebDriverWait(driver, 10)
+            workflow_link = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'li.item a.to-dashboard[href*="/client_stores/"]'))
+            )
+            # Verify it's the Workflow link by checking text content
+            if workflow_link.text.strip() == 'Workflow':
+                workflow_link.click()
+                time.sleep(2)  # Wait for dashboard to load
+            else:
+                # If first link isn't Workflow, find all dashboard links and click the Workflow one
+                dashboard_links = driver.find_elements(By.CSS_SELECTOR, 'li.item a.to-dashboard[href*="/client_stores/"]')
+                for link in dashboard_links:
+                    if link.text.strip() == 'Workflow':
+                        link.click()
+                        time.sleep(2)
+                        break
+            
+        wait_with_spinner("Navigating to Workflow dashboard...", nav_action)
+        print("Successfully navigated to Workflow dashboard")
+        return True
+        
+    except Exception as e:
+        print(f"Error navigating to Workflow dashboard: {str(e)}")
+        return False
+
+def scan_model_workflows(driver, models_data):
+    """Scan workflow states and actions for each model"""
+    try:
+        print("\n" + "=" * 80)
+        print("\n                     Scanning Model Workflows")
+        print("\n" + "=" * 80)
+        
+        # First navigate to Workflow dashboard
+        if not navigate_to_workflows(driver):
+            print("\nError: Could not navigate to Workflow dashboard")
+            return models_data
+            
+        # Initialize counters for progress bar
+        total_models = len(models_data)
+        current_model = 0
+        last_states_text = None  # Track last seen workflow states
+        
+        # Print initial progress bar
+        sys.stdout.write("\rScanning Workflows: [--------------------------------------------------] 0.0% (0/{})".format(total_models))
+        sys.stdout.flush()
+        
+        # Process each model
+        for model_name, model_data in models_data.items():
+            try:
+                current_model += 1
+                progress = (current_model / total_models) * 100
+                
+                # Update progress bar
+                bar_length = 50
+                filled_length = int(bar_length * current_model // total_models)
+                bar = '=' * filled_length + '-' * (bar_length - filled_length)
+                
+                sys.stdout.write('\r' + ' ' * 100)
+                sys.stdout.write('\rScanning Workflows: [{0}] {1:.1f}% ({2}/{3}) - {4}'.format(
+                    bar, progress, current_model, total_models, model_name
+                ))
+                sys.stdout.flush()
+                
+                # Try different model name formats for the selector
+                possible_ids = [
+                    model_name,  # Original name
+                    model_name.replace(" ", ""),  # No spaces
+                    ''.join(word.capitalize() for word in model_name.split()),  # CamelCase
+                    f"MacModelTypeDyn{model_name.replace(' ', '')}",  # Dynamic model format
+                    model_name.replace(" ", "_")  # Underscores
+                ]
+                
+                model_element = None
+                for model_id in possible_ids:
+                    selector = f"div.link.is-admin[data-id='{model_id}']"
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        model_element = elements[0]
+                        break
+                
+                if model_element:
+                    # Get current states text before clicking
+                    states_before = driver.find_elements(By.CSS_SELECTOR, "li.entry[data-model-id]")
+                    states_before_text = [s.text for s in states_before]
+                    
+                    # Click the model
+                    driver.execute_script("arguments[0].click();", model_element)
+                    time.sleep(3)  # Wait for potential UI update
+                    
+                    # Check for blank workflow menu
+                    blank_menu = driver.find_elements(By.CSS_SELECTOR, "li.entry.selected.new-item")
+                    if blank_menu:
+                        models_data[model_name]['workflow'] = "No Workflow"
+                        continue
+                    
+                    # Get states after clicking
+                    states_after = driver.find_elements(By.CSS_SELECTOR, "li.entry[data-model-id]")
+                    states_after_text = [s.text for s in states_after]
+                    
+                    # Check if states actually changed
+                    if states_after_text == states_before_text and states_after_text == last_states_text:
+                        models_data[model_name]['workflow'] = "No Workflow"
+                        continue
+                    
+                    last_states_text = states_after_text
+                    
+                    # Check for "Does Not Utilize Workflow" message
+                    no_workflow_elements = driver.find_elements(By.CSS_SELECTOR, "div.notice.error")
+                    if any("Does Not Utilize Workflow" in elem.text for elem in no_workflow_elements):
+                        models_data[model_name]['workflow'] = "No Workflow"
+                        continue
+                    
+                    # Get all workflow states
+                    states = driver.find_elements(By.CSS_SELECTOR, "li.entry[data-model-id]")
+                    
+                    if not states:
+                        models_data[model_name]['workflow'] = "No Workflow"
+                        continue
+                        
+                    workflow_states = []
+                    for state in states:
+                        try:
+                            # Get state name
+                            state_header = state.find_element(By.CSS_SELECTOR, "a.to-detail h2")
+                            state_text = state_header.text.strip()
+                            
+                            # Parse display and internal names
+                            match = re.match(r'(.*?)\s*\((.*?)\)', state_text)
+                            if match:
+                                display_name, internal_name = match.groups()
+                            else:
+                                display_name = internal_name = state_text
+                                
+                            # Get actions for this state
+                            actions = []
+                            action_elements = state.find_elements(By.CSS_SELECTOR, 
+                                "ul.events li:not(:last-child) a.to-detail")  # Skip last child (+ button)
+                            
+                            for action in action_elements:
+                                action_name = action.text.strip()
+                                if action_name and not action_name == '+':
+                                    actions.append(action_name)
+                                    
+                            workflow_states.append({
+                                'display_name': display_name.strip(),
+                                'internal_name': internal_name.strip(),
+                                'actions': actions
+                            })
+                            
+                        except Exception as e:
+                            continue
+                    
+                    # Store workflow data in model dictionary
+                    if workflow_states:
+                        print(f"\nFound {len(workflow_states)} states for {model_name}")
+                        models_data[model_name]['workflow'] = workflow_states
+                    else:
+                        models_data[model_name]['workflow'] = "No Workflow"
+                            
+                else:
+                    models_data[model_name]['workflow'] = "No Workflow"
+                    
+            except Exception as e:
+                models_data[model_name]['workflow'] = "No Workflow"
+                continue
+                
+        # Show completion
+        sys.stdout.write('\r' + ' ' * 100)
+        sys.stdout.write('\rWorkflow scanning complete!')
+        sys.stdout.flush()
+        print("\n" + "=" * 80)
+        
+        return models_data
+        
+    except Exception as e:
+        print(f"\nError during workflow scanning: {str(e)}")
+        return models_data
 
 # HTML Structure Reference for Forms Section:
 #
@@ -746,6 +959,32 @@ def generate_word_document(models_data, site_url=None):
                                 else:
                                     cells[1].text = 'No code blocks configured'
                                     cells[1].paragraphs[0].runs[0].font.name = 'Calibri'
+                
+                            # Add workflow information
+                            if placeholder == 'Workflow:':
+                                workflow_data = model_data.get('workflow', 'No Workflow')
+                                if isinstance(workflow_data, list) and workflow_data:
+                                    # Add number of states
+                                    workflow_text = [f"{len(workflow_data)} Workflow States:"]
+                                    
+                                    # Add each state and its actions
+                                    for state in workflow_data:
+                                        # Add blank line before each state except the first one
+                                        if len(workflow_text) > 1:
+                                            workflow_text.append("")
+                                        
+                                        # Add state name with display and internal names
+                                        workflow_text.append(f"{state['display_name']} ({state['internal_name']})")
+                                        
+                                        # Add actions if they exist
+                                        if state['actions']:
+                                            for action in state['actions']:
+                                                workflow_text.append(f"- {action}")
+                                    
+                                    cells[1].text = '\n'.join(workflow_text)
+                                else:
+                                    cells[1].text = str(workflow_data)
+                                cells[1].paragraphs[0].runs[0].font.name = 'Calibri'
                 
                 # Add space after model table
                 if model_name != list(models_data.keys())[-1]:
@@ -1268,9 +1507,24 @@ def main():
                 else:
                     input("Press Enter to exit...")
                     return
-                    
-            # Gather theme code if requested
-            models_data = gather_theme_code(driver, models_data)
+            
+            # Ask if user wants to gather code blocks
+            print("\nWould you like to gather Before/After code blocks from themes?")
+            print("This step can be skipped if you only need model structure and workflows.")
+            code_choice = input("Gather code blocks? (y/n): ").strip().lower()
+            
+            if code_choice == 'y':
+                # Gather theme code if requested
+                models_data = gather_theme_code(driver, models_data)
+            
+            # Ask if user wants to scan workflows
+            print("\nWould you like to scan model workflows?")
+            print("This will gather workflow states and actions for each model.")
+            workflow_choice = input("Scan workflows? (y/n): ").strip().lower()
+            
+            if workflow_choice == 'y':
+                # Scan workflows
+                models_data = scan_model_workflows(driver, models_data)
 
             print_divider()
             print("Available Actions:")
