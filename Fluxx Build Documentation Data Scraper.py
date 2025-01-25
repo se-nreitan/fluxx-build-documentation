@@ -268,11 +268,16 @@ def wait_with_spinner(message, action_func, *args, **kwargs):
 def wait_for_dashboard(driver, timeout=60):
     """Wait for dashboard to load and verify we're logged in"""
     try:
-        print("Waiting for dashboard to load...")
-        print("Please:")
-        print("1. Log in with your credentials")
-        print("2. Select your Admin profile (if applicable)")
-        print("3. System will automatically proceed when dashboard loads\n")
+        print("\n" + "=" * 80)
+        print("\nLogin Instructions:")
+        print("\n1. Enter your credentials in the browser window")
+        print("2. Click 'Sign In' or 'Log In'")
+        print("3. If prompted, select your Admin profile")
+        print("\nIMPORTANT:")
+        print("- Wait for the dashboard to fully load")
+        print("- Once logged in, avoid clicking any elements in the browser")
+        print("- The script will automatically navigate to required sections")
+        print("\n" + "=" * 80)
         
         def wait_for_admin():
             wait = WebDriverWait(driver, timeout)
@@ -280,15 +285,15 @@ def wait_for_dashboard(driver, timeout=60):
                 EC.presence_of_element_located((By.CSS_SELECTOR, 'a.to-admin-panel[href="/?db=config"]'))
             )
             
-        wait_with_spinner("Waiting for successful login...", wait_for_admin)
-        print("\nDashboard loaded successfully!")
+        wait_with_spinner("Waiting for login...", wait_for_admin)
+        print("\nLogin successful!")
         return True
         
     except TimeoutException:
-        print("Timed out waiting for login")
+        print("\nLogin timed out")
         return False
     except Exception as e:
-        print(f"Error waiting for login: {str(e)}")
+        print(f"\nLogin error: {str(e)}")
         return False
 
 def navigate_to_admin(driver):
@@ -340,7 +345,11 @@ def navigate_to_admin(driver):
 def wait_for_forms_and_parse(driver, max_retries=3):
     """Wait for Forms section to load and parse content with retry logic"""
     try:
-        print("\nParsing Forms section...")
+        # Clear screen and show header
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("\n" + "=" * 80)
+        print("\n                     Scanning Models and Themes")
+        print("\n" + "=" * 80)
         
         wait = WebDriverWait(driver, 10)
         
@@ -349,30 +358,78 @@ def wait_for_forms_and_parse(driver, max_retries=3):
             (By.CSS_SELECTOR, "#iconList")
         ))
         
-        while True:  # Loop until user confirms correct model count
-            # Get model count by finding all model ULs in the iconList
-            model_list = driver.find_elements(By.CSS_SELECTOR, "#iconList > ul")
-            # Filter out any empty or invalid ULs
+        # Wait for at least one model to be loaded
+        try:
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#iconList > ul[id]")) > 0)
+        except TimeoutException:
+            wait = WebDriverWait(driver, 30)
+            wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#iconList > ul[id]")) > 0)
+        
+        time.sleep(2)
+        
+        while True:
+            model_list = driver.find_elements(By.CSS_SELECTOR, "#iconList > ul[id]")
             model_list = [model for model in model_list if model.get_attribute("id")]
             model_count = len(model_list)
             
-            # Ask user to verify count
-            print(f"\nFound {model_count} models in the Forms section.")
+            # Get the height of the iconList container
+            icon_list = driver.find_element(By.CSS_SELECTOR, "#iconList")
+            list_height = driver.execute_script("return arguments[0].scrollHeight", icon_list)
+            
+            # Scroll through the list to ensure all models are loaded
+            current_scroll = 0
+            scroll_step = 500
+            
+            while current_scroll < list_height:
+                driver.execute_script(f"arguments[0].scrollTop = {current_scroll}", icon_list)
+                time.sleep(0.5)
+                current_scroll += scroll_step
+            
+            driver.execute_script("arguments[0].scrollTop = 0", icon_list)
+            
+            model_list = driver.find_elements(By.CSS_SELECTOR, "#iconList > ul[id]")
+            model_list = [model for model in model_list if model.get_attribute("id")]
+            new_count = len(model_list)
+            
+            if new_count > model_count:
+                model_count = new_count
+                continue
+            
+            print(f"\nFound {model_count} models.")
             verify = input("Does this count appear correct? (y/n): ").strip().lower()
             
             if verify == 'y':
                 break
-            else:
-                print("\nPlease wait for all models to load and try again...")
-                time.sleep(2)
-                continue
+            print("\nWaiting for more models to load...")
+            time.sleep(3)
                 
         # Initialize dictionary to store model data
         models = {}
+        current_model = 0
+        total_models = len(model_list)
+        
+        # Print initial progress bar
+        sys.stdout.write("\rScanning Models: [--------------------------------------------------] 0.0% (0/{})".format(total_models))
+        sys.stdout.flush()
         
         # Process each model
         for model_ul in model_list:
             try:
+                current_model += 1
+                progress = (current_model / total_models) * 100
+                
+                # Create progress bar
+                bar_length = 50
+                filled_length = int(bar_length * current_model // total_models)
+                bar = '=' * filled_length + '-' * (bar_length - filled_length)
+                
+                # Update progress bar
+                sys.stdout.write('\r' + ' ' * 100)
+                sys.stdout.write('\rScanning Models: [{0}] {1:.1f}% ({2}/{3})'.format(
+                    bar, progress, current_model, total_models
+                ))
+                sys.stdout.flush()
+                
                 # Get model name from the UL id attribute
                 model_id = model_ul.get_attribute("id")
                 if not model_id:
@@ -403,19 +460,10 @@ def wait_for_forms_and_parse(driver, max_retries=3):
                         except:
                             continue
                 except:
-                    # If we can't find the model type, continue without it
                     pass
                 
-                # Check if model is dynamic by checking if type starts with MacModelTypeDyn
+                # Check if model is dynamic
                 is_dynamic = model_type and model_type.startswith('MacModelTypeDyn')
-                
-                # Print model name with type and dynamic indicator if available
-                output = f"\nModel: {model_name}"
-                if model_type:
-                    output += f" ({model_type})"
-                if is_dynamic:
-                    output += " - Dynamic Model"
-                print(output)
                 
                 models[model_name] = {
                     'type': model_type,
@@ -423,50 +471,47 @@ def wait_for_forms_and_parse(driver, max_retries=3):
                     'themes': {}
                 }
                 
-                # Find themes within this model's UL - looking for li.icon elements
+                # Find themes within this model's UL
                 theme_items = model_ul.find_elements(By.CSS_SELECTOR, 
                     "li.icon[data-card-uid]")
                 
                 for theme in theme_items:
                     try:
-                        # Get theme name from the exact path: li.icon > a.link > span.label
                         theme_label = theme.find_element(By.CSS_SELECTOR, 
                             "a.link.scroll-to-card > span.label[role='menuitem']")
                         theme_name = theme_label.get_attribute("textContent").strip()
                         
                         if theme_name and theme_name not in ['New Theme', 'Retired Themes', 'Export', 'Filter', 'Visualizations']:
-                            print(f"  Theme: {theme_name}")
                             models[model_name]['themes'][theme_name] = {'views': []}
                             
-                            # Find the listing div that contains views - using exact path
+                            # Find and process views
                             listing_div = theme.find_element(By.CSS_SELECTOR, 
                                 "div.listing[data-type='listing'][data-src='/stencils']")
                             
-                            # Get all view entries from the list - using exact path
                             views = listing_div.find_elements(By.CSS_SELECTOR,
                                 "ul.list > li.entry:not(.non-entry)")
                             
                             for view in views:
                                 try:
-                                    # Get view name using exact path: li.entry > a.to-detail > div.label
                                     label_div = view.find_element(By.CSS_SELECTOR, 
                                         "a.to-detail > div.label")
                                     view_name = label_div.get_attribute("textContent").strip()
                                     
                                     if view_name and view_name != 'New View':
-                                        print(f"    View: {view_name}")
                                         models[model_name]['themes'][theme_name]['views'].append(view_name)
-                                except Exception as e:
-                                    print(f"    Error getting view name: {str(e)}")
+                                except:
                                     continue
-                                    
-                    except Exception as e:
-                        print(f"Error processing theme: {str(e)}")
+                    except:
                         continue
                         
-            except Exception as e:
-                print(f"Error processing model {model_name if 'model_name' in locals() else 'Unknown'}: {str(e)}")
+            except:
                 continue
+        
+        # Show completion
+        sys.stdout.write('\r' + ' ' * 100)
+        sys.stdout.write('\rModel scanning complete!')
+        sys.stdout.flush()
+        print("\n" + "=" * 80)
         
         return models
         
@@ -480,17 +525,74 @@ def generate_word_document(models_data, site_url=None):
         # Create document
         doc = Document()
         
-        # Title
-        doc.add_heading('Fluxx Build Documentation', 0)
-        doc.add_paragraph('via Social Edge Consulting').italic = True
+        # Set standard margins (1 inch = 1440 twips)
+        sections = doc.sections
+        for section in sections:
+            # Set all margins to 1 inch
+            section.left_margin = 1440000 // 1000  # 1 inch
+            section.right_margin = 1440000 // 1000  # 1 inch
+            section.top_margin = 1440000 // 1000  # 1 inch
+            section.bottom_margin = 1440000 // 1000  # 1 inch
+            # Set page dimensions
+            section.page_width = Pt(8.5 * 72)  # 8.5 inches
+            section.page_height = Pt(11 * 72)  # 11 inches
         
-        # Add TOC placeholder
+        # Set default font and styles
+        style = doc.styles['Normal']
+        style.font.name = 'Calibri'
+        style.font.size = Pt(11)
+        style.paragraph_format.space_after = Pt(12)  # Add spacing after paragraphs
+        
+        # Update heading styles
+        for heading_level in range(1, 4):
+            style = doc.styles[f'Heading {heading_level}']
+            style.font.name = 'Calibri'
+            style.font.bold = True
+            style.paragraph_format.space_before = Pt(18)  # Add spacing before headings
+            style.paragraph_format.space_after = Pt(12)  # Add spacing after headings
+            if heading_level == 1:
+                style.font.size = Pt(16)
+            elif heading_level == 2:
+                style.font.size = Pt(14)
+            else:
+                style.font.size = Pt(12)
+        
+        # Title with spacing
+        doc.add_paragraph()  # Add space before title
+        title = doc.add_heading('Fluxx Build Documentation', 0)
+        title.style.font.name = 'Calibri'
+        title.style.font.size = Pt(20)
+        title.style.font.bold = True
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        subtitle = doc.add_paragraph('via Social Edge Consulting')
+        subtitle.style = doc.styles['Normal']
+        subtitle.runs[0].italic = True
+        subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Add space after subtitle
+        doc.add_paragraph()
         doc.add_paragraph()
         
         # Client Information section
-        doc.add_heading('Client Information', 1)
+        info_heading = doc.add_heading('Client Information', 1)
+        info_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        
+        # Calculate table dimensions
+        available_width = section.page_width - (section.left_margin + section.right_margin)
+        table_width = int(available_width * 0.9)  # 90% of available width
+        
+        # Client Info table
         table = doc.add_table(rows=7, cols=2)
         table.style = 'Table Grid'
+        table.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        table.width = table_width
+        
+        # Set column widths
+        col_widths = [0.3, 0.7]  # 30% and 70% of table width
+        for i, width in enumerate(col_widths):
+            for cell in table.columns[i].cells:
+                cell.width = int(table_width * width)
         
         # Add client info headers and populate URL
         headers = ['URLs:', 'Product Enhancements:', 'Integrations:', 
@@ -500,25 +602,44 @@ def generate_word_document(models_data, site_url=None):
             cells = table.rows[i].cells
             cells[0].text = header
             cells[0].paragraphs[0].runs[0].bold = True
+            cells[0].paragraphs[0].runs[0].font.name = 'Calibri'
             
             # Add URL to the first row if available
             if i == 0 and site_url:
                 cells[1].text = site_url
+                cells[1].paragraphs[0].runs[0].font.name = 'Calibri'
+            
+            # Add padding to cells
+            for cell in cells:
+                for paragraph in cell.paragraphs:
+                    paragraph.paragraph_format.space_before = Pt(6)
+                    paragraph.paragraph_format.space_after = Pt(6)
         
         # Models Section
         doc.add_page_break()
-        doc.add_heading('Models', 1)
+        models_heading = doc.add_heading('Models', 1)
+        models_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
         
         # Add each model
         for model_name, model_data in models_data.items():
             try:
+                # Add space before model table
+                doc.add_paragraph()
+                
                 # Model table
                 table = doc.add_table(rows=9, cols=2)
                 table.style = 'Table Grid'
+                table.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                table.width = table_width
+                
+                # Set column widths
+                for i, width in enumerate(col_widths):
+                    for cell in table.columns[i].cells:
+                        cell.width = int(table_width * width)
                 
                 # Model name header with type and dynamic indicator
                 header_row = table.rows[0]
-                if len(header_row.cells) >= 2:  # Verify we have enough cells
+                if len(header_row.cells) >= 2:
                     header_row.cells[0].merge(header_row.cells[1])
                     model_type = model_data.get('type', '')
                     is_dynamic = model_data.get('is_dynamic', False)
@@ -527,28 +648,43 @@ def generate_word_document(models_data, site_url=None):
                         header_text += f" ({model_type})"
                     if is_dynamic:
                         header_text += " - Dynamic Model"
-                    header_row.cells[0].text = header_text
-                    header_row.cells[0].paragraphs[0].style = doc.styles['Heading 3']
+                    header_cell = header_row.cells[0]
+                    header_cell.text = header_text
+                    header_para = header_cell.paragraphs[0]
+                    header_para.style = doc.styles['Heading 3']
+                    header_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    for run in header_para.runs:
+                        run.font.name = 'Calibri'
                 
                 # Themes section
-                if len(table.rows) > 1:  # Verify we have a second row
+                if len(table.rows) > 1:
                     row = table.rows[1].cells
-                    if len(row) >= 2:  # Verify we have both cells
+                    if len(row) >= 2:
                         row[0].text = 'Themes:'
                         row[0].paragraphs[0].runs[0].bold = True
+                        row[0].paragraphs[0].runs[0].font.name = 'Calibri'
                         
                         # Add themes and views
                         themes_text = []
                         for theme_name, theme_data in model_data['themes'].items():
                             theme_section = [f"\n{theme_name}"]
+                            
+                            # Add views
                             for view in theme_data['views']:
                                 theme_section.append(f"• {view}")
+                            
                             themes_text.append('\n'.join(theme_section))
                         
                         row[1].text = f"{len(model_data['themes'])} Themes Built\n"
-                        row[1].text += '\n'.join(themes_text)
+                        row[1].paragraphs[0].runs[0].font.name = 'Calibri'
+                        row[1].paragraphs[0].runs[0].bold = True
+                        
+                        # Add themes list
+                        themes_para = row[1].add_paragraph('\n'.join(themes_text))
+                        for run in themes_para.runs:
+                            run.font.name = 'Calibri'
                 
-                # Add other rows as placeholders
+                # Add other rows with placeholders
                 placeholders = [
                     'Workflow:', 'Add Card Menu:', 'Method:', 
                     'Before New / After Create:', 
@@ -558,13 +694,60 @@ def generate_word_document(models_data, site_url=None):
                 ]
                 
                 for i, placeholder in enumerate(placeholders, start=2):
-                    if i < len(table.rows):  # Verify row exists
+                    if i < len(table.rows):
                         cells = table.rows[i].cells
-                        if len(cells) >= 2:  # Verify cells exist
+                        if len(cells) >= 2:
                             cells[0].text = placeholder
                             cells[0].paragraphs[0].runs[0].bold = True
+                            cells[0].paragraphs[0].runs[0].font.name = 'Calibri'
+                            
+                            # Add theme code to Before New / After Create cell
+                            if placeholder == 'Before New / After Create:':
+                                code_text = []
+                                for theme_name, theme_data in model_data['themes'].items():
+                                    if 'code' in theme_data:
+                                        code = theme_data['code']
+                                        theme_code = []
+                                        
+                                        # Add theme name as header
+                                        theme_code.append(f"\n{theme_name}:")
+                                        
+                                        # Add Current Before New code
+                                        current_before = code.get('current_before_new', 'N/A')
+                                        if current_before != 'N/A':
+                                            theme_code.append("\nCurrent Before New Block:")
+                                            theme_code.append(current_before)
+                                            
+                                        # Add Draft Before New code
+                                        draft_before = code.get('draft_before_new', 'N/A')
+                                        if draft_before != 'N/A':
+                                            theme_code.append("\nDraft Before New Block:")
+                                            theme_code.append(draft_before)
+                                            
+                                        # Add Current After Create code
+                                        current_after = code.get('current_after_create', 'N/A')
+                                        if current_after != 'N/A':
+                                            theme_code.append("\nCurrent After Create Block:")
+                                            theme_code.append(current_after)
+                                            
+                                        # Add Draft After Create code
+                                        draft_after = code.get('draft_after_create', 'N/A')
+                                        if draft_after != 'N/A':
+                                            theme_code.append("\nDraft After Create Block:")
+                                            theme_code.append(draft_after)
+                                            
+                                        if any(code != 'N/A' for code in [current_before, draft_before, current_after, draft_after]):
+                                            code_text.append('\n'.join(theme_code))
+                                
+                                if code_text:
+                                    code_para = cells[1].add_paragraph('\n'.join(code_text))
+                                    for run in code_para.runs:
+                                        run.font.name = 'Consolas'  # Use monospace font for code
+                                else:
+                                    cells[1].text = 'No code blocks configured'
+                                    cells[1].paragraphs[0].runs[0].font.name = 'Calibri'
                 
-                # Add page break between models
+                # Add space after model table
                 if model_name != list(models_data.keys())[-1]:
                     doc.add_page_break()
                     
@@ -572,14 +755,16 @@ def generate_word_document(models_data, site_url=None):
                 print(f"\nError processing model {model_name}: {str(e)}")
                 continue
         
-        # Add remaining sections as placeholders
+        # Add remaining sections
         doc.add_page_break()
-        doc.add_heading('Portals', 1)
-        # ... portal tables would go here
+        portals_heading = doc.add_heading('Portals', 1)
+        portals_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        doc.add_paragraph()  # Add space after heading
         
         doc.add_page_break()
-        doc.add_heading('Other Build Considerations', 1)
-        # ... other considerations table would go here
+        other_heading = doc.add_heading('Other Build Considerations', 1)
+        other_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        doc.add_paragraph()  # Add space after heading
         
         # Save the document
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -765,6 +950,242 @@ def validate_fluxx_url(url):
     
     return f'https://{url}'
 
+def wait_for_modal_load(driver, timeout=10):
+    """Wait for modal to fully load"""
+    try:
+        wait = WebDriverWait(driver, timeout)
+        modal = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "div.modal.new-modal.area[style*='opacity: 1']")
+        ))
+        # Additional wait for content
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "div.modal textarea.code-to-submit")
+        ))
+        return modal
+    except TimeoutException:
+        return None
+
+def safely_close_modal(driver, timeout=10):
+    """Safely close the modal window"""
+    try:
+        wait = WebDriverWait(driver, timeout)
+        close_button = wait.until(EC.element_to_be_clickable(
+            (By.CSS_SELECTOR, "a.close-modal")
+        ))
+        close_button.click()
+        # Wait for modal to disappear
+        wait.until(EC.invisibility_of_element_located(
+            (By.CSS_SELECTOR, "div.modal.new-modal.area")
+        ))
+        return True
+    except:
+        return False
+
+def close_all_models(driver):
+    """Close all open models"""
+    try:
+        # Find all open models
+        open_models = driver.find_elements(By.CSS_SELECTOR, "ul.toggle-class.open")
+        for model in open_models:
+            # Remove the open class
+            driver.execute_script("arguments[0].classList.remove('open');", model)
+        time.sleep(0.5)  # Brief pause to let animations complete
+    except Exception as e:
+        print(f"Warning: Could not close all models: {str(e)}")
+
+def ensure_model_open(driver, model_ul, model_name):
+    """Ensure a model is open and ready for processing"""
+    try:
+        # Check if model is already open
+        if 'open' not in model_ul.get_attribute('class').split():
+            # Find and click the model header
+            model_header = model_ul.find_element(By.CSS_SELECTOR, "li.list-label div.link.is-admin")
+            driver.execute_script("arguments[0].click();", model_header)
+            
+            # Wait for the open class to appear
+            wait = WebDriverWait(driver, 10)
+            wait.until(lambda d: 'open' in model_ul.get_attribute('class').split())
+            time.sleep(1)  # Additional pause to let content load
+            
+            # Verify the model opened
+            if 'open' not in model_ul.get_attribute('class').split():
+                return False
+        return True
+    except Exception as e:
+        return False
+
+def get_theme_code(driver, theme_element, model_ul, model_name):
+    """Get Before/After code for a theme"""
+    try:
+        # Ensure model is open before processing themes
+        if not ensure_model_open(driver, model_ul, model_name):
+            return None
+        
+        # Now ensure the theme is visible by clicking the theme name
+        try:
+            theme_link = theme_element.find_element(By.CSS_SELECTOR, 
+                "a.link.scroll-to-card")
+            theme_link.click()
+            time.sleep(1)
+        except Exception as e:
+            return None
+            
+        # Wait for theme to be visible and expanded
+        wait = WebDriverWait(driver, 10)
+        wait.until(EC.visibility_of(theme_element))
+        
+        # Find and click the gear icon
+        try:
+            gear_icon = theme_element.find_element(By.CSS_SELECTOR, 
+                "a.to-modal.open-config[data-on-success='matchListItem,close']")
+            driver.execute_script("arguments[0].scrollIntoView(true);", gear_icon)
+            time.sleep(1)
+            driver.execute_script("arguments[0].click();", gear_icon)
+        except Exception as e:
+            return None
+        
+        # Wait for modal to load
+        modal = wait_for_modal_load(driver)
+        if not modal:
+            return None
+            
+        # Find all code textareas with correct IDs
+        code_blocks = {
+            'current_before_new': {
+                'id': 'model_theme_unsafe_before_new_block',
+                'label': 'Current Before New Block'
+            },
+            'draft_before_new': {
+                'id': 'model_theme_draft_before_new_block',
+                'label': 'Draft Before New Block'
+            },
+            'current_after_create': {
+                'id': 'model_theme_unsafe_after_create_block',
+                'label': 'Current After Create Block'
+            },
+            'draft_after_create': {
+                'id': 'model_theme_draft_after_create_block',
+                'label': 'Draft After Create Block'
+            }
+        }
+        
+        code_data = {}
+        for key, block in code_blocks.items():
+            try:
+                textarea = modal.find_element(By.CSS_SELECTOR, f"textarea#{block['id']}")
+                code = textarea.get_attribute("value").strip()
+                code_data[key] = code if code else "N/A"
+            except:
+                code_data[key] = "N/A"
+        
+        # Safely close the modal
+        safely_close_modal(driver)
+        return code_data
+        
+    except Exception as e:
+        try:
+            safely_close_modal(driver)
+        except:
+            pass
+        return None
+
+def gather_theme_code(driver, models):
+    """Gather Before/After code for all themes"""
+    print("\n" + "=" * 80)
+    print("\n                     Theme Code Gathering Process")
+    print("\n" + "=" * 80 + "\n")
+    print("This process will gather Before/After code from all themes automatically.")
+    print("This may take several minutes to complete depending on the number of models.")
+    print("\nIMPORTANT:")
+    print("- You can stop the process at any time by pressing Ctrl+C")
+    print("- Please do not interact with the browser while the process is running")
+    print("- The browser will automatically handle all interactions")
+    print("\n" + "-" * 80)
+    verify = input("\nWould you like to proceed with gathering code? (y/n): ").strip().lower()
+    
+    if verify != 'y':
+        print("\nSkipping code gathering process.")
+        return models
+    
+    total_models = len(models)
+    current_model = 0
+    
+    # Clear screen and show initial progress
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print("\n" + "=" * 80)
+    print("\n                     Theme Code Gathering Process")
+    print("\nPress Ctrl+C to stop the process at any time")
+    print("Please wait while code is gathered from all themes...")
+    print("\n" + "=" * 80)
+    
+    # Print initial progress bar line
+    sys.stdout.write("\rProcessing Models: [--------------------------------------------------] 0.0% (0/{})".format(total_models))
+    sys.stdout.flush()
+    
+    try:
+        for model_name, model_data in models.items():
+            current_model += 1
+            progress = (current_model / total_models) * 100
+            
+            # Create progress bar
+            bar_length = 50
+            filled_length = int(bar_length * current_model // total_models)
+            bar = '=' * filled_length + '-' * (bar_length - filled_length)
+            
+            # Update progress bar (stay on same line, no extra newlines)
+            sys.stdout.write('\r' + ' ' * 100)  # Clear current line
+            sys.stdout.write('\rProcessing Models: [{0}] {1:.1f}% ({2}/{3})'.format(
+                bar, progress, current_model, total_models
+            ))
+            sys.stdout.flush()
+            
+            try:
+                model_ul = driver.find_element(By.CSS_SELECTOR, f"ul#{model_name.lower().replace(' ', '_')}")
+                
+                # Ensure model is open
+                if not ensure_model_open(driver, model_ul, model_name):
+                    continue
+                
+                for theme_name, theme_data in model_data['themes'].items():
+                    theme_elements = model_ul.find_elements(By.CSS_SELECTOR, "li.icon[data-card-uid]")
+                    
+                    for theme_element in theme_elements:
+                        try:
+                            label = theme_element.find_element(By.CSS_SELECTOR, 
+                                "a.link.scroll-to-card span.label").text
+                            
+                            if label == theme_name:
+                                code_data = get_theme_code(driver, theme_element, model_ul, model_name)
+                                if code_data:
+                                    models[model_name]['themes'][theme_name]['code'] = code_data
+                                break
+                        except:
+                            continue
+                
+                # Close model after processing
+                if 'open' in model_ul.get_attribute('class').split():
+                    model_header = model_ul.find_element(By.CSS_SELECTOR, "li.list-label div.link.is-admin")
+                    driver.execute_script("arguments[0].click();", model_header)
+                    time.sleep(1)
+                        
+            except:
+                continue
+        
+        # Clear line and show completion message
+        sys.stdout.write('\r' + ' ' * 100)  # Clear current line
+        sys.stdout.write('\rCode gathering process complete!')
+        sys.stdout.flush()
+        print("\n" + "=" * 80)
+        return models
+        
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully
+        sys.stdout.write('\r' + ' ' * 100)  # Clear current line
+        sys.stdout.write('\rProcess stopped by user.')
+        sys.stdout.flush()
+        print("\n" + "=" * 80)
+        return models
+
 def main():
     try:
         print_header()
@@ -847,6 +1268,9 @@ def main():
                 else:
                     input("Press Enter to exit...")
                     return
+                    
+            # Gather theme code if requested
+            models_data = gather_theme_code(driver, models_data)
 
             print_divider()
             print("Available Actions:")
