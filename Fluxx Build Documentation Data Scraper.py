@@ -406,14 +406,20 @@ def wait_for_forms_and_parse(driver, max_retries=3):
                     # If we can't find the model type, continue without it
                     pass
                 
-                # Print model name with type if available
+                # Check if model is dynamic by checking if type starts with MacModelTypeDyn
+                is_dynamic = model_type and model_type.startswith('MacModelTypeDyn')
+                
+                # Print model name with type and dynamic indicator if available
+                output = f"\nModel: {model_name}"
                 if model_type:
-                    print(f"\nModel: {model_name} ({model_type})")
-                else:
-                    print(f"\nModel: {model_name}")
+                    output += f" ({model_type})"
+                if is_dynamic:
+                    output += " - Dynamic Model"
+                print(output)
                 
                 models[model_name] = {
                     'type': model_type,
+                    'is_dynamic': is_dynamic,
                     'themes': {}
                 }
                 
@@ -510,14 +516,17 @@ def generate_word_document(models_data, site_url=None):
                 table = doc.add_table(rows=9, cols=2)
                 table.style = 'Table Grid'
                 
-                # Model name header with type in parentheses
+                # Model name header with type and dynamic indicator
                 header_row = table.rows[0]
                 if len(header_row.cells) >= 2:  # Verify we have enough cells
                     header_row.cells[0].merge(header_row.cells[1])
                     model_type = model_data.get('type', '')
+                    is_dynamic = model_data.get('is_dynamic', False)
                     header_text = model_name
                     if model_type:
                         header_text += f" ({model_type})"
+                    if is_dynamic:
+                        header_text += " - Dynamic Model"
                     header_row.cells[0].text = header_text
                     header_row.cells[0].paragraphs[0].style = doc.styles['Heading 3']
                 
