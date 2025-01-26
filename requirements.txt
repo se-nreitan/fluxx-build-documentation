@@ -1,3 +1,5 @@
-selenium
-pyinstaller
-requests 
+selenium>=4.0.0
+python-docx>=0.8.11
+requests>=2.26.0
+webdriver-manager>=3.8.0
+pyinstaller>=5.0.0 

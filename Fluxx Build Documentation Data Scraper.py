@@ -1,16 +1,16 @@
 # HOW TO USE:
-# 1. Install Selenium using pip: pip install selenium
-# 2. Download ChromeDriver matching your Chrome version from:
-#    https://googlechromelabs.github.io/chrome-for-testing/
-# 3. Place chromedriver.exe in the drivers/chromedriver_win32 folder
-# 4. Install webdriver-manager: pip install webdriver-manager
+# 1. Install dependencies: pip install -r requirements.txt
+# 2. Make sure you have Google Chrome installed
+# 3. Run this script: python "Fluxx Build Documentation Data Scraper.py"
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import WebDriverException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 from getpass import getpass
 from urllib.parse import urlparse
 import sys
@@ -24,12 +24,40 @@ import requests
 import winreg
 import shutil
 import time
-from selenium.common.exceptions import TimeoutException
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import datetime
 import threading
+
+print("Script starting...")
+print(f"Python version: {sys.version}")
+print(f"Current working directory: {os.getcwd()}")
+
+def print_logo():
+    """Print the Social Edge logo and contact info"""
+    logo = """
+                    ;X.
+                  ;XX+
+                .XX+  ..:.
+              .XX+  xXXxxXXX
+            .XXx  xXX.    .XX
+            XX  ;XX. .XX+  XX
+            Xx  .  .XXX  +XX.
+            ;XXx.;XXx  ;XX;
+              .+++:  :XX;
+                   :XX+
+                  +X+
+
+       Social Edge Consulting - 2025
+   nick.reitan@socialedgeconsulting.com
+
+
+  Fluxx Build Documentation Automated Tool
+
+==================================================
+"""
+    print(logo)
 
 def get_chrome_path():
     """Get installed Chrome path from registry"""
@@ -66,24 +94,20 @@ def get_resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-def get_url():
-    """Get and format the Fluxx URL from user input"""
+def get_fluxx_url():
+    """Get and validate Fluxx URL from user input"""
     while True:
-        try:
-            url = input("\nEnter Fluxx URL (e.g., example.fluxx.io): ").strip()
-            if not url:
-                print("URL cannot be empty. Please try again.")
-                continue
-                
-            if not url.startswith(('http://', 'https://')):
-                url = 'https://' + url
-                
-            print(f"Using URL: {url}")
-            return url
+        url = input("\nEnter Fluxx Instance Name or URL (e.g., 'example' or example.fluxx.io): ").strip()
+        if not url:
+            print("URL cannot be empty. Please try again.")
+            continue
             
-        except Exception as e:
-            print(f"Error with URL input: {str(e)}")
-            print("Please try again.")
+        url = validate_fluxx_url(url)
+        print(f"\nUsing URL: {url}")
+        verify = input("Is this correct? (y/n): ").strip().lower()
+        if verify == 'y':
+            return url
+        print()  # Add blank line before retry
 
 def get_chrome_version():
     """Get Chrome version from registry."""
@@ -382,7 +406,19 @@ def scan_model_workflows(driver, models_data):
         print("\n" + "=" * 80)
         print("\n                     Scanning Model Workflows")
         print("\n" + "=" * 80)
+        print("\nThis process will scan workflows from all models automatically.")
+        print("This may take several minutes to complete depending on the number of models.")
+        print("\nIMPORTANT:")
+        print("- You can stop the process at any time by pressing Ctrl+C")
+        print("- Please do not interact with the browser while the process is running")
+        print("- The browser will automatically handle all interactions")
+        print("\n" + "-" * 80)
+        verify = input("\nWould you like to proceed with scanning workflows? (y/n): ").strip().lower()
         
+        if verify != 'y':
+            print("\nSkipping workflow scanning process.")
+            return models_data
+            
         # First navigate to Workflow dashboard
         if not navigate_to_workflows(driver):
             print("\nError: Could not navigate to Workflow dashboard")
@@ -391,11 +427,14 @@ def scan_model_workflows(driver, models_data):
         # Initialize counters for progress bar
         total_models = len(models_data)
         current_model = 0
-        last_states_text = None  # Track last seen workflow states
         
-        # Print initial progress bar
-        sys.stdout.write("\rScanning Workflows: [--------------------------------------------------] 0.0% (0/{})".format(total_models))
-        sys.stdout.flush()
+        # Clear screen and show initial progress
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("\n" + "=" * 80)
+        print("\n                     Scanning Model Workflows")
+        print("\nPress Ctrl+C to stop the process at any time")
+        print("Please wait while workflows are scanned from all models...")
+        print("\n" + "=" * 80 + "\n")
         
         # Process each model
         for model_name, model_data in models_data.items():
@@ -403,17 +442,22 @@ def scan_model_workflows(driver, models_data):
                 current_model += 1
                 progress = (current_model / total_models) * 100
                 
-                # Update progress bar
+                # Update progress bar with model name and theme count
                 bar_length = 50
                 filled_length = int(bar_length * current_model // total_models)
                 bar = '=' * filled_length + '-' * (bar_length - filled_length)
                 
-                sys.stdout.write('\r' + ' ' * 100)
-                sys.stdout.write('\rScanning Workflows: [{0}] {1:.1f}% ({2}/{3}) - {4}'.format(
-                    bar, progress, current_model, total_models, model_name
-                ))
-                sys.stdout.flush()
+                # Count themes for current model
+                theme_count = len(model_data.get('themes', {}))
+                status_text = f"Scanning Workflows: [{bar}] {progress:.1f}% ({current_model}/{total_models}) - {model_name}"
+                if theme_count > 0:
+                    status_text += f" ({theme_count} themes)"
                 
+                # Clear line and write status
+                sys.stdout.write('\r' + ' ' * 100)  # Clear line
+                sys.stdout.write('\r' + status_text)
+                sys.stdout.flush()
+
                 # Try different model name formats for the selector
                 possible_ids = [
                     model_name,  # Original name
@@ -432,96 +476,253 @@ def scan_model_workflows(driver, models_data):
                         break
                 
                 if model_element:
-                    # Get current states text before clicking
-                    states_before = driver.find_elements(By.CSS_SELECTOR, "li.entry[data-model-id]")
-                    states_before_text = [s.text for s in states_before]
-                    
                     # Click the model
                     driver.execute_script("arguments[0].click();", model_element)
-                    time.sleep(3)  # Wait for potential UI update
+                    time.sleep(2)  # Wait for potential UI update
                     
-                    # Check for blank workflow menu
-                    blank_menu = driver.find_elements(By.CSS_SELECTOR, "li.entry.selected.new-item")
-                    if blank_menu:
-                        models_data[model_name]['workflow'] = "No Workflow"
+                    # Get themes from the model data
+                    themes = model_data.get('themes', {})
+                    if not themes:
+                        # Initialize empty workflow data structure
+                        models_data[model_name]['workflow'] = {'themes': {}}
+                        print(f"\nNo workflow found for {model_name} (no themes)")
                         continue
                     
-                    # Get states after clicking
-                    states_after = driver.find_elements(By.CSS_SELECTOR, "li.entry[data-model-id]")
-                    states_after_text = [s.text for s in states_after]
+                    print(f"\nProcessing {len(themes)} themes for {model_name}")
+                    workflow_data = {'themes': {}}
                     
-                    # Check if states actually changed
-                    if states_after_text == states_before_text and states_after_text == last_states_text:
-                        models_data[model_name]['workflow'] = "No Workflow"
-                        continue
+                    # Find all theme links excluding "New Theme" and "Retired Themes"
+                    theme_links = driver.find_elements(By.CSS_SELECTOR, 
+                        "li.icon:not(.new-theme):not(.retired-themes) > a.link[title]")
                     
-                    last_states_text = states_after_text
-                    
-                    # Check for "Does Not Utilize Workflow" message
-                    no_workflow_elements = driver.find_elements(By.CSS_SELECTOR, "div.notice.error")
-                    if any("Does Not Utilize Workflow" in elem.text for elem in no_workflow_elements):
-                        models_data[model_name]['workflow'] = "No Workflow"
-                        continue
-                    
-                    # Get all workflow states
-                    states = driver.find_elements(By.CSS_SELECTOR, "li.entry[data-model-id]")
-                    
-                    if not states:
-                        models_data[model_name]['workflow'] = "No Workflow"
-                        continue
-                        
-                    workflow_states = []
-                    for state in states:
+                    for theme_link in theme_links:
                         try:
-                            # Get state name
-                            state_header = state.find_element(By.CSS_SELECTOR, "a.to-detail h2")
-                            state_text = state_header.text.strip()
-                            
-                            # Parse display and internal names
-                            match = re.match(r'(.*?)\s*\((.*?)\)', state_text)
-                            if match:
-                                display_name, internal_name = match.groups()
-                            else:
-                                display_name = internal_name = state_text
+                            theme_name = theme_link.get_attribute('title')
+                            if not theme_name or theme_name not in themes:
+                                continue
                                 
-                            # Get actions for this state
-                            actions = []
-                            action_elements = state.find_elements(By.CSS_SELECTOR, 
-                                "ul.events li:not(:last-child) a.to-detail")  # Skip last child (+ button)
+                            print(f"\nProcessing theme: {theme_name}")
                             
-                            for action in action_elements:
-                                action_name = action.text.strip()
-                                if action_name and not action_name == '+':
-                                    actions.append(action_name)
-                                    
-                            workflow_states.append({
-                                'display_name': display_name.strip(),
-                                'internal_name': internal_name.strip(),
-                                'actions': actions
-                            })
+                            # Click the theme
+                            driver.execute_script("arguments[0].click();", theme_link)
+                            time.sleep(2)  # Wait for theme to load
                             
+                            try:
+                                # Wait for workflow container
+                                wait = WebDriverWait(driver, 10)
+                                workflow_container = wait.until(
+                                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.listing[data-type='listing'][data-src='/machine_states']"))
+                                )
+                                
+                                # Find all states in the workflow container
+                                states = workflow_container.find_elements(By.CSS_SELECTOR, "li.entry[data-model-id]")
+                                
+                                if not states:
+                                    workflow_data['themes'][theme_name] = {
+                                        'workflow_id': None,
+                                        'states': []
+                                    }
+                                    continue
+                                
+                                # Get workflow ID from any new event link
+                                workflow_id = None
+                                new_event_links = workflow_container.find_elements(By.CSS_SELECTOR, "a.new-event")
+                                if new_event_links:
+                                    href = new_event_links[0].get_attribute('href')
+                                    match = re.search(r'machine_workflow_id=(\d+)', href)
+                                    if match:
+                                        workflow_id = match.group(1)
+                                
+                                # Process each state
+                                theme_states = []
+                                for state in states:
+                                    try:
+                                        # Get state header with both display and internal names
+                                        state_header = state.find_element(By.CSS_SELECTOR, "h2").text.strip()
+                                        
+                                        # Parse display and internal names
+                                        match = re.match(r'(.*?)\s*\((.*?)\)', state_header)
+                                        if match:
+                                            display_name, internal_name = match.groups()
+                                        else:
+                                            display_name = internal_name = state_header
+                                            
+                                        # Click state to get validation blocks
+                                        state_link = state.find_element(By.CSS_SELECTOR, "a.to-detail")
+                                        driver.execute_script("arguments[0].click();", state_link)
+                                        time.sleep(1)
+                                        
+                                        # Wait for state details
+                                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form.machine_state")))
+                                        
+                                        # Get all validation blocks
+                                        validation_blocks = {}
+                                        try:
+                                            current_before = driver.find_element(By.CSS_SELECTOR, 
+                                                "#machine_state_unsafe_before_validation_enter").get_attribute("value")
+                                            if current_before and current_before.strip():
+                                                validation_blocks['current_before_validation'] = current_before.strip()
+                                                
+                                            draft_before = driver.find_element(By.CSS_SELECTOR,
+                                                "#machine_state_draft_before_validation_enter").get_attribute("value")
+                                            if draft_before and draft_before.strip():
+                                                validation_blocks['draft_before_validation'] = draft_before.strip()
+                                                
+                                            current_after = driver.find_element(By.CSS_SELECTOR,
+                                                "#machine_state_unsafe_after_enter").get_attribute("value")
+                                            if current_after and current_after.strip():
+                                                validation_blocks['current_after_enter'] = current_after.strip()
+                                                
+                                            draft_after = driver.find_element(By.CSS_SELECTOR,
+                                                "#machine_state_draft_after_enter").get_attribute("value")
+                                            if draft_after and draft_after.strip():
+                                                validation_blocks['draft_after_enter'] = draft_after.strip()
+                                        except Exception as e:
+                                            print(f"Error getting validation blocks: {str(e)}")
+                                        
+                                        # Get actions for this state
+                                        actions = []
+                                        action_elements = state.find_elements(By.CSS_SELECTOR, 
+                                            "ul.events > li:not(:last-child) > a.to-detail")
+                                        
+                                        for action in action_elements:
+                                            try:
+                                                action_name = action.text.strip()
+                                                if action_name and not action_name == '+':
+                                                    # Click action to get details
+                                                    driver.execute_script("arguments[0].click();", action)
+                                                    time.sleep(1)
+                                                    
+                                                    # Wait for action details
+                                                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "form.machine_event")))
+                                                    
+                                                    # Get to state
+                                                    to_state = None
+                                                    try:
+                                                        to_state_select = driver.find_element(By.CSS_SELECTOR, "#machine_event_to_state_id")
+                                                        to_state = to_state_select.find_element(By.CSS_SELECTOR, "option[selected]").text.strip()
+                                                    except:
+                                                        pass
+                                                    
+                                                    # Get guard instructions
+                                                    guard_instructions = None
+                                                    try:
+                                                        guard = driver.find_element(By.CSS_SELECTOR,
+                                                            "#machine_event_unsafe_guard").get_attribute("value")
+                                                        if guard and guard.strip():
+                                                            guard_instructions = guard.strip()
+                                                    except:
+                                                        pass
+                                                    
+                                                    # Get draft guard instructions
+                                                    draft_guard = None
+                                                    try:
+                                                        draft = driver.find_element(By.CSS_SELECTOR,
+                                                            "#machine_event_draft_guard").get_attribute("value")
+                                                        if draft and draft.strip():
+                                                            draft_guard = draft.strip()
+                                                    except:
+                                                        pass
+                                                    
+                                                    action_data = {
+                                                        'name': action_name,
+                                                        'to_state': to_state,
+                                                        'guard_instructions': guard_instructions,
+                                                        'draft_guard': draft_guard
+                                                    }
+                                                    actions.append(action_data)
+                                            except Exception as e:
+                                                print(f"Error processing action {action_name}: {str(e)}")
+                                                continue
+                                        
+                                        state_data = {
+                                            'display_name': display_name.strip(),
+                                            'internal_name': internal_name.strip(),
+                                            'validation_blocks': validation_blocks,
+                                            'actions': actions
+                                        }
+                                        theme_states.append(state_data)
+                                            
+                                    except Exception as e:
+                                        print(f"\nError processing state: {str(e)}")
+                                        continue
+                                
+                                workflow_data['themes'][theme_name] = {
+                                    'workflow_id': workflow_id,
+                                    'states': theme_states
+                                }
+
+                            except TimeoutException:
+                                print(f"Workflow container not found for theme: {theme_name}")
+                                workflow_data['themes'][theme_name] = {
+                                    'workflow_id': None,
+                                    'states': []
+                                }
+                                continue
+                                
                         except Exception as e:
+                            print(f"\nError processing theme {theme_name}: {str(e)}")
                             continue
                     
                     # Store workflow data in model dictionary
-                    if workflow_states:
-                        print(f"\nFound {len(workflow_states)} states for {model_name}")
-                        models_data[model_name]['workflow'] = workflow_states
-                    else:
-                        models_data[model_name]['workflow'] = "No Workflow"
-                            
+                    models_data[model_name]['workflow'] = workflow_data
                 else:
-                    models_data[model_name]['workflow'] = "No Workflow"
+                    # Initialize empty workflow data structure for models without workflows
+                    models_data[model_name]['workflow'] = {'themes': {}}
                     
             except Exception as e:
-                models_data[model_name]['workflow'] = "No Workflow"
+                print(f"\nError processing model {model_name}: {str(e)}")
+                models_data[model_name]['workflow'] = {'themes': {}}
                 continue
                 
         # Show completion
-        sys.stdout.write('\r' + ' ' * 100)
+        sys.stdout.write('\r' + ' ' * 100)  # Clear line
         sys.stdout.write('\rWorkflow scanning complete!')
         sys.stdout.flush()
         print("\n" + "=" * 80)
+        
+        # Debug output of collected data
+        print("\nDEBUG OUTPUT - Collected Workflow Data:")
+        print("=" * 80)
+        for model_name, model_data in models_data.items():
+            workflow_data = model_data.get('workflow', {})
+            if workflow_data and workflow_data.get('themes'):
+                print(f"\nModel: {model_name}")
+                print("-" * 40)
+                
+                for theme_name, theme_data in workflow_data['themes'].items():
+                    print(f"\n  Theme: {theme_name}")
+                    if theme_data.get('workflow_id'):
+                        print(f"  Workflow ID: {theme_data['workflow_id']}")
+                    
+                    if theme_data.get('states'):
+                        for state in theme_data['states']:
+                            print(f"\n    State: {state.get('display_name')} ({state.get('internal_name')})")
+                            
+                            # Show validation blocks
+                            if state.get('validation_blocks'):
+                                print("      Validation Blocks:")
+                                for block_type, block_code in state['validation_blocks'].items():
+                                    if block_code:
+                                        print(f"        {block_type}:")
+                                        print(f"        {block_code[:100]}..." if len(block_code) > 100 else block_code)
+                            
+                            # Show actions
+                            if state.get('actions'):
+                                print("      Actions:")
+                                for action in state['actions']:
+                                    print(f"        - {action.get('name')} -> {action.get('to_state', 'N/A')}")
+                                    if action.get('guard_instructions'):
+                                        print(f"          Guard: {action['guard_instructions'][:100]}...")
+                                    if action.get('draft_guard'):
+                                        print(f"          Draft Guard: {action['draft_guard'][:100]}...")
+                    else:
+                        print("    No states found")
+                print("\n" + "-" * 40)
+            
+        print("\n" + "=" * 80)
+        print("End of Debug Output")
+        print("=" * 80 + "\n")
         
         return models_data
         
@@ -669,7 +870,6 @@ def wait_for_forms_and_parse(driver, max_retries=3):
                                 match = re.search(r'model_theme\[model_type\]=(\w+)', href)
                                 if match:
                                     model_type = match.group(1)
-                                    break
                         except:
                             continue
                 except:
@@ -741,252 +941,305 @@ def generate_word_document(models_data, site_url=None):
         # Set standard margins (1 inch = 1440 twips)
         sections = doc.sections
         for section in sections:
-            # Set all margins to 1 inch
-            section.left_margin = 1440000 // 1000  # 1 inch
-            section.right_margin = 1440000 // 1000  # 1 inch
-            section.top_margin = 1440000 // 1000  # 1 inch
-            section.bottom_margin = 1440000 // 1000  # 1 inch
+            section.left_margin = int(1.25 * 1440)  # 1.25 inch left margin
+            section.right_margin = int(1.25 * 1440)  # 1.25 inch right margin
+            section.top_margin = int(1.25 * 1440)  # 1.25 inch top margin
+            section.bottom_margin = int(1.25 * 1440)  # 1.25 inch bottom margin
             # Set page dimensions
             section.page_width = Pt(8.5 * 72)  # 8.5 inches
             section.page_height = Pt(11 * 72)  # 11 inches
         
-        # Set default font and styles
+        # Set default font and paragraph styles
         style = doc.styles['Normal']
         style.font.name = 'Calibri'
         style.font.size = Pt(11)
-        style.paragraph_format.space_after = Pt(12)  # Add spacing after paragraphs
+        style.paragraph_format.space_before = Pt(12)  # Space before paragraphs
+        style.paragraph_format.space_after = Pt(12)   # Space after paragraphs
+        style.paragraph_format.line_spacing = 1.15    # Line spacing
         
         # Update heading styles
-        for heading_level in range(1, 4):
-            style = doc.styles[f'Heading {heading_level}']
-            style.font.name = 'Calibri'
-            style.font.bold = True
-            style.paragraph_format.space_before = Pt(18)  # Add spacing before headings
-            style.paragraph_format.space_after = Pt(12)  # Add spacing after headings
-            if heading_level == 1:
-                style.font.size = Pt(16)
-            elif heading_level == 2:
-                style.font.size = Pt(14)
-            else:
-                style.font.size = Pt(12)
+        heading1 = doc.styles['Heading 1']
+        heading1.font.name = 'Calibri'
+        heading1.font.size = Pt(16)
+        heading1.font.bold = True
+        heading1.paragraph_format.space_before = Pt(24)  # Extra space before H1
+        heading1.paragraph_format.space_after = Pt(12)
         
-        # Title with spacing
-        doc.add_paragraph()  # Add space before title
+        heading2 = doc.styles['Heading 2']
+        heading2.font.name = 'Calibri'
+        heading2.font.size = Pt(14)
+        heading2.font.bold = True
+        heading2.paragraph_format.space_before = Pt(18)  # Space before H2
+        heading2.paragraph_format.space_after = Pt(12)
+        
+        # Add title with proper spacing
         title = doc.add_heading('Fluxx Build Documentation', 0)
-        title.style.font.name = 'Calibri'
-        title.style.font.size = Pt(20)
-        title.style.font.bold = True
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title.paragraph_format.space_before = Pt(36)  # Extra space at top
+        title.paragraph_format.space_after = Pt(24)
         
-        subtitle = doc.add_paragraph('via Social Edge Consulting')
-        subtitle.style = doc.styles['Normal']
-        subtitle.runs[0].italic = True
-        subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-        # Add space after subtitle
-        doc.add_paragraph()
-        doc.add_paragraph()
-        
-        # Client Information section
-        info_heading = doc.add_heading('Client Information', 1)
-        info_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        
-        # Calculate table dimensions
-        available_width = section.page_width - (section.left_margin + section.right_margin)
-        table_width = int(available_width * 0.9)  # 90% of available width
-        
-        # Client Info table
-        table = doc.add_table(rows=7, cols=2)
-        table.style = 'Table Grid'
-        table.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        table.width = table_width
-        
-        # Set column widths
-        col_widths = [0.3, 0.7]  # 30% and 70% of table width
-        for i, width in enumerate(col_widths):
-            for cell in table.columns[i].cells:
-                cell.width = int(table_width * width)
-        
-        # Add client info headers and populate URL
-        headers = ['URLs:', 'Product Enhancements:', 'Integrations:', 
-                  'Social Edge Implementation Team:', 'Project Team:', 
-                  'Admins:', 'Notes:']
-        for i, header in enumerate(headers):
-            cells = table.rows[i].cells
-            cells[0].text = header
-            cells[0].paragraphs[0].runs[0].bold = True
-            cells[0].paragraphs[0].runs[0].font.name = 'Calibri'
+        # Add subtitle with URL if provided
+        if site_url:
+            subtitle = doc.add_paragraph()
+            subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            subtitle.paragraph_format.space_before = Pt(12)
+            subtitle.paragraph_format.space_after = Pt(24)
+            subtitle_text = subtitle.add_run(f"Generated for: {site_url}")
+            subtitle_text.font.size = Pt(12)
+            subtitle_text.font.name = 'Calibri'
             
-            # Add URL to the first row if available
-            if i == 0 and site_url:
-                cells[1].text = site_url
-                cells[1].paragraphs[0].runs[0].font.name = 'Calibri'
-            
-            # Add padding to cells
-            for cell in cells:
-                for paragraph in cell.paragraphs:
-                    paragraph.paragraph_format.space_before = Pt(6)
-                    paragraph.paragraph_format.space_after = Pt(6)
+        # Add generation timestamp
+        timestamp = doc.add_paragraph()
+        timestamp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        timestamp.paragraph_format.space_before = Pt(12)
+        timestamp.paragraph_format.space_after = Pt(36)  # Extra space after header
+        timestamp_text = timestamp.add_run(f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        timestamp_text.font.size = Pt(10)
+        timestamp_text.font.name = 'Calibri'
         
-        # Models Section
         doc.add_page_break()
-        models_heading = doc.add_heading('Models', 1)
-        models_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
         
-        # Add each model
+        # Process each model
         for model_name, model_data in models_data.items():
             try:
-                # Add space before model table
-                doc.add_paragraph()
+                # Add spacing before model section
+                doc.add_paragraph().paragraph_format.space_before = Pt(24)
                 
-                # Model table
+                # Create table with specific width and center alignment
                 table = doc.add_table(rows=9, cols=2)
                 table.style = 'Table Grid'
                 table.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                # Set table width to 90% of page width
+                section = doc.sections[0]
+                available_width = section.page_width - (section.left_margin + section.right_margin)
+                table_width = int(available_width * 0.9)
                 table.width = table_width
                 
-                # Set column widths
-                for i, width in enumerate(col_widths):
+                # Set column widths (30% for labels, 70% for content)
+                for i, width in enumerate([0.3, 0.7]):
                     for cell in table.columns[i].cells:
                         cell.width = int(table_width * width)
                 
-                # Model name header with type and dynamic indicator
+                # Define all row titles with their indices
+                row_titles = {
+                    0: 'Model Name',  # Header row
+                    1: 'Themes:',
+                    2: 'Workflow:',
+                    3: 'Add Card Menu:',
+                    4: 'Method:',
+                    5: 'Before New / After Create:',
+                    6: 'Before Validation / After Enter / Guard Instructions:',
+                    7: 'Documents:',
+                    8: 'Embedded Cards / Dynamic Relationships:'
+                }
+                
+                # Set up all row titles and initialize empty cells
+                for row_idx, title in row_titles.items():
+                    if row_idx > 0:  # Skip header row
+                        cell = table.rows[row_idx].cells[0]
+                        cell.text = title
+                        cell.paragraphs[0].runs[0].bold = True
+                        cell.paragraphs[0].runs[0].font.name = 'Calibri'
+                        # Initialize empty content cell
+                        table.rows[row_idx].cells[1].text = ''
+                
+                # Model header (row 0)
                 header_row = table.rows[0]
-                if len(header_row.cells) >= 2:
-                    header_row.cells[0].merge(header_row.cells[1])
-                    model_type = model_data.get('type', '')
-                    is_dynamic = model_data.get('is_dynamic', False)
-                    header_text = model_name
-                    if model_type:
-                        header_text += f" ({model_type})"
-                    if is_dynamic:
-                        header_text += " - Dynamic Model"
-                    header_cell = header_row.cells[0]
-                    header_cell.text = header_text
-                    header_para = header_cell.paragraphs[0]
-                    header_para.style = doc.styles['Heading 3']
-                    header_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    for run in header_para.runs:
-                        run.font.name = 'Calibri'
+                header_row.cells[0].merge(header_row.cells[1])
+                model_type = model_data.get('type', '')
+                is_dynamic = model_data.get('is_dynamic', False)
+                header_text = model_name
+                if model_type:
+                    header_text += f" ({model_type})"
+                if is_dynamic:
+                    header_text += " - Dynamic Model"
+                header_cell = header_row.cells[0]
+                header_para = header_cell.paragraphs[0]
+                header_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                header_run = header_para.add_run(header_text)
+                header_run.font.bold = True
+                header_run.font.size = Pt(14)
+                header_run.font.name = 'Calibri'
                 
-                # Themes section
-                if len(table.rows) > 1:
-                    row = table.rows[1].cells
-                    if len(row) >= 2:
-                        row[0].text = 'Themes:'
-                        row[0].paragraphs[0].runs[0].bold = True
-                        row[0].paragraphs[0].runs[0].font.name = 'Calibri'
-                        
-                        # Add themes and views
-                        themes_text = []
-                        for theme_name, theme_data in model_data['themes'].items():
-                            theme_section = [f"\n{theme_name}"]
-                            
-                            # Add views
-                            for view in theme_data['views']:
-                                theme_section.append(f"• {view}")
-                            
-                            themes_text.append('\n'.join(theme_section))
-                        
-                        row[1].text = f"{len(model_data['themes'])} Themes Built\n"
-                        row[1].paragraphs[0].runs[0].font.name = 'Calibri'
-                        row[1].paragraphs[0].runs[0].bold = True
-                        
-                        # Add themes list
-                        themes_para = row[1].add_paragraph('\n'.join(themes_text))
-                        for run in themes_para.runs:
-                            run.font.name = 'Calibri'
+                # Process themes (row 1)
+                themes = model_data.get('themes', {})
+                theme_text = [f"{len(themes)} Themes Built"]
+                for theme_name, theme_data in themes.items():
+                    theme_line = [f"\n{theme_name}"]
+                    views = theme_data.get('views', [])
+                    for view in views:
+                        theme_line.append(f"- {view}")
+                    theme_text.append('\n'.join(theme_line))
+                table.rows[1].cells[1].text = '\n'.join(theme_text)
                 
-                # Add other rows with placeholders
-                placeholders = [
-                    'Workflow:', 'Add Card Menu:', 'Method:', 
-                    'Before New / After Create:', 
-                    'Before Validation / After Enter / Guard Instructions:',
-                    'Documents:', 'Embedded Cards / Dynamic Relationships:',
-                    'Notes:'
-                ]
-                
-                for i, placeholder in enumerate(placeholders, start=2):
-                    if i < len(table.rows):
-                        cells = table.rows[i].cells
-                        if len(cells) >= 2:
-                            cells[0].text = placeholder
-                            cells[0].paragraphs[0].runs[0].bold = True
-                            cells[0].paragraphs[0].runs[0].font.name = 'Calibri'
-                            
-                            # Add theme code to Before New / After Create cell
-                            if placeholder == 'Before New / After Create:':
-                                code_text = []
-                                for theme_name, theme_data in model_data['themes'].items():
-                                    if 'code' in theme_data:
-                                        code = theme_data['code']
-                                        theme_code = []
-                                        
-                                        # Add theme name as header
-                                        theme_code.append(f"\n{theme_name}:")
-                                        
-                                        # Add Current Before New code
-                                        current_before = code.get('current_before_new', 'N/A')
-                                        if current_before != 'N/A':
-                                            theme_code.append("\nCurrent Before New Block:")
-                                            theme_code.append(current_before)
+                # Process workflows (row 2)
+                workflow_data = model_data.get('workflow', {})
+                if isinstance(workflow_data, dict):
+                    themes = workflow_data.get('themes', {})
+                    if themes:
+                        workflow_text = []
+                        for theme_name, theme_data in themes.items():
+                            if isinstance(theme_data, dict):
+                                states = theme_data.get('states', [])
+                                if states:
+                                    workflow_text.append(f"\nTheme: {theme_name}")
+                                    for state in states:
+                                        if isinstance(state, dict):
+                                            display_name = state.get('display_name', '')
+                                            internal_name = state.get('internal_name', '')
+                                            workflow_text.append(f"• {display_name} ({internal_name})")
                                             
-                                        # Add Draft Before New code
-                                        draft_before = code.get('draft_before_new', 'N/A')
-                                        if draft_before != 'N/A':
-                                            theme_code.append("\nDraft Before New Block:")
-                                            theme_code.append(draft_before)
-                                            
-                                        # Add Current After Create code
-                                        current_after = code.get('current_after_create', 'N/A')
-                                        if current_after != 'N/A':
-                                            theme_code.append("\nCurrent After Create Block:")
-                                            theme_code.append(current_after)
-                                            
-                                        # Add Draft After Create code
-                                        draft_after = code.get('draft_after_create', 'N/A')
-                                        if draft_after != 'N/A':
-                                            theme_code.append("\nDraft After Create Block:")
-                                            theme_code.append(draft_after)
-                                            
-                                        if any(code != 'N/A' for code in [current_before, draft_before, current_after, draft_after]):
-                                            code_text.append('\n'.join(theme_code))
-                                
-                                if code_text:
-                                    code_para = cells[1].add_paragraph('\n'.join(code_text))
-                                    for run in code_para.runs:
-                                        run.font.name = 'Consolas'  # Use monospace font for code
+                                            actions = state.get('actions', [])
+                                            for action in actions:
+                                                if isinstance(action, dict):
+                                                    action_text = f"  - {action.get('name', '')}"
+                                                    to_state = action.get('to_state')
+                                                    if to_state:
+                                                        action_text += f" [To State -> {to_state}]"
+                                                    workflow_text.append(action_text)
+                        
+                        if workflow_text:
+                            workflow_cell = table.rows[2].cells[1]
+                            workflow_cell.text = ''
+                            for line in workflow_text:
+                                para = workflow_cell.add_paragraph()
+                                if line.startswith('\nTheme:'):
+                                    run = para.add_run(line.strip())
+                                    run.bold = True
+                                elif line.startswith('  -'):
+                                    run = para.add_run(line)
+                                    run.font.size = Pt(9)
+                                    run.font.italic = True
+                                    run.font.color.rgb = RGBColor(128, 128, 128)
                                 else:
-                                    cells[1].text = 'No code blocks configured'
-                                    cells[1].paragraphs[0].runs[0].font.name = 'Calibri'
+                                    run = para.add_run(line)
+                                para.paragraph_format.space_after = Pt(0)
+                                para.paragraph_format.space_before = Pt(0)
+                    else:
+                        table.rows[2].cells[1].text = "No workflow states configured"
+                else:
+                    table.rows[2].cells[1].text = "No workflow configuration"
                 
-                            # Add workflow information
-                            if placeholder == 'Workflow:':
-                                workflow_data = model_data.get('workflow', 'No Workflow')
-                                if isinstance(workflow_data, list) and workflow_data:
-                                    # Add number of states
-                                    workflow_text = [f"{len(workflow_data)} Workflow States:"]
-                                    
-                                    # Add each state and its actions
-                                    for state in workflow_data:
-                                        # Add blank line before each state except the first one
-                                        if len(workflow_text) > 1:
-                                            workflow_text.append("")
-                                        
-                                        # Add state name with display and internal names
-                                        workflow_text.append(f"{state['display_name']} ({state['internal_name']})")
-                                        
-                                        # Add actions if they exist
-                                        if state['actions']:
-                                            for action in state['actions']:
-                                                workflow_text.append(f"- {action}")
-                                    
-                                    cells[1].text = '\n'.join(workflow_text)
+                # Process Before New / After Create (row 5)
+                before_after_cell = table.rows[5].cells[1]
+                code_text = []
+                for theme_name, theme_data in themes.items():
+                    code = theme_data.get('code', {})
+                    if code:
+                        code_text.append(f"\nTheme: {theme_name}")
+                        for block_type in ['current_before_new', 'draft_before_new', 'current_after_create', 'draft_after_create']:
+                            if code.get(block_type):
+                                block_title = block_type.replace('_', ' ').title()
+                                code_text.append(f"\n{block_title}:")
+                                code_text.append(code[block_type])
+                if code_text:
+                    before_after_cell.text = '\n'.join(code_text)
+                
+                # Process validation blocks and guard instructions (row 6)
+                validation_cell = table.rows[6].cells[1]
+                if isinstance(workflow_data, dict):
+                    themes = workflow_data.get('themes', {})
+                    if themes:
+                        validation_text = []
+                        validation_text.append("BEFORE AND AFTER VALIDATION:")
+                        
+                        # Process validation blocks
+                        for theme_name, theme_data in themes.items():
+                            if isinstance(theme_data, dict):
+                                states = theme_data.get('states', [])
+                                if states:
+                                    has_validation = False
+                                    for state in states:
+                                        if isinstance(state, dict):
+                                            validation_blocks = state.get('validation_blocks', {})
+                                            if validation_blocks:
+                                                if not has_validation:
+                                                    validation_text.append(f"\nTheme: {theme_name}")
+                                                    has_validation = True
+                                                
+                                                display_name = state.get('display_name', '')
+                                                internal_name = state.get('internal_name', '')
+                                                validation_text.append(f"\nState: {display_name} ({internal_name})")
+                                                
+                                                for block_type, block_code in validation_blocks.items():
+                                                    if block_code:
+                                                        validation_text.append(f"\n{block_type}:")
+                                                        validation_text.append(block_code)
+                        
+                        # Process guard instructions
+                        has_guards = False
+                        guard_text = ["\nGUARD INSTRUCTIONS:"]
+                        
+                        for theme_name, theme_data in themes.items():
+                            if isinstance(theme_data, dict):
+                                states = theme_data.get('states', [])
+                                if states:
+                                    theme_has_guards = False
+                                    for state in states:
+                                        if isinstance(state, dict):
+                                            actions = state.get('actions', [])
+                                            for action in actions:
+                                                if isinstance(action, dict):
+                                                    guard = action.get('guard_instructions')
+                                                    draft_guard = action.get('draft_guard')
+                                                    
+                                                    if guard or draft_guard:
+                                                        if not theme_has_guards:
+                                                            guard_text.append(f"\nTheme: {theme_name}")
+                                                            theme_has_guards = True
+                                                            has_guards = True
+                                                        
+                                                        display_name = state.get('display_name', '')
+                                                        internal_name = state.get('internal_name', '')
+                                                        action_name = action.get('name', '')
+                                                        
+                                                        if guard:
+                                                            guard_text.append(f"\nGuard Instructions for {action_name} in {display_name} ({internal_name}):")
+                                                            guard_text.append(guard)
+                                                        if draft_guard:
+                                                            guard_text.append(f"\nDraft Guard Instructions for {action_name} in {display_name} ({internal_name}):")
+                                                            guard_text.append(draft_guard)
+                        
+                        if has_guards:
+                            validation_text.extend(guard_text)
+                        
+                        if len(validation_text) > 1:
+                            validation_cell.text = ''
+                            for line in validation_text:
+                                para = validation_cell.add_paragraph()
+                                if line.endswith('VALIDATION:') or line.endswith('INSTRUCTIONS:'):
+                                    run = para.add_run(line)
+                                    run.bold = True
+                                elif line.startswith('Theme:'):
+                                    run = para.add_run(line)
+                                    run.bold = True
+                                elif line.startswith('Guard Instructions for'):
+                                    run = para.add_run(line)
+                                    run.italic = True
+                                elif line.startswith('State:') or line.startswith('current_') or line.startswith('draft_'):
+                                    run = para.add_run(line)
+                                    run.font.name = 'Consolas'
+                                    run.font.size = Pt(9)
+                                    run.font.color.rgb = RGBColor(128, 128, 128)
                                 else:
-                                    cells[1].text = str(workflow_data)
-                                cells[1].paragraphs[0].runs[0].font.name = 'Calibri'
+                                    run = para.add_run(line)
+                                    run.font.name = 'Consolas'
+                                    run.font.size = Pt(9)
+                                    run.font.color.rgb = RGBColor(128, 128, 128)
+                        else:
+                            validation_cell.text = "No validation blocks or guard instructions configured"
+                    else:
+                        validation_cell.text = "No workflow configuration"
+                else:
+                    validation_cell.text = "No workflow configuration"
                 
-                # Add space after model table
+                # Rows 3, 4, 7, and 8 remain empty for user input
+                
+                # Add spacing after table
+                doc.add_paragraph().paragraph_format.space_after = Pt(24)
+                
+                # Add page break between models
                 if model_name != list(models_data.keys())[-1]:
                     doc.add_page_break()
                     
@@ -994,18 +1247,7 @@ def generate_word_document(models_data, site_url=None):
                 print(f"\nError processing model {model_name}: {str(e)}")
                 continue
         
-        # Add remaining sections
-        doc.add_page_break()
-        portals_heading = doc.add_heading('Portals', 1)
-        portals_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        doc.add_paragraph()  # Add space after heading
-        
-        doc.add_page_break()
-        other_heading = doc.add_heading('Other Build Considerations', 1)
-        other_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        doc.add_paragraph()  # Add space after heading
-        
-        # Save the document
+        # Save document
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f'fluxx_documentation_{timestamp_str}.docx'
         doc.save(filename)
@@ -1196,6 +1438,7 @@ def wait_for_modal_load(driver, timeout=10):
         modal = wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "div.modal.new-modal.area[style*='opacity: 1']")
         ))
+        
         # Additional wait for content
         wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "div.modal textarea.code-to-submit")
@@ -1427,30 +1670,19 @@ def gather_theme_code(driver, models):
 
 def main():
     try:
-        print_header()
+        # Show logo and contact info
+        print_logo()
         
+        # Get Fluxx URL
+        url = get_fluxx_url()
+        if not url:
+            return
+
         # Check Chrome setup
         if not check_chrome_and_driver():
             input("\nPress Enter to exit...")
             return
         
-        # Clear screen and show fresh header before URL input
-        print_header()
-        
-        # Get and validate URL
-        while True:
-            url = input("Enter Fluxx Instance Name or URL (e.g., 'example' or example.fluxx.io): ").strip()
-            if not url:
-                print("URL cannot be empty. Please try again.")
-                continue
-                
-            url = validate_fluxx_url(url)
-            print(f"\nUsing URL: {url}")
-            verify = input("Is this correct? (y/n): ").strip().lower()
-            if verify == 'y':
-                break
-            print()  # Add blank line before retry
-            
         # Setup Chrome
         print("Starting Chrome...")
         driver_path = get_resource_path("chromedriver.exe")
@@ -1469,7 +1701,7 @@ def main():
         
         service = Service(driver_path, log_path='NUL')  # Suppress ChromeDriver logs
         driver = webdriver.Chrome(service=service, options=options)
-        
+
         print(f"Navigating to {url}")
         driver.get(url)
         
@@ -1577,5 +1809,12 @@ def main():
                 pass
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nScript terminated by user.")
+    except Exception as e:
+        print(f"\nAn error occurred: {str(e)}")
+    finally:
+        input("\nPress Enter to exit...")
 
